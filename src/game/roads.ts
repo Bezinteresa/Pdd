@@ -21,7 +21,7 @@ const rect = (x: number, z: number, width: number, depth: number): Rect => ({ x,
 
 export const cityMap: RoadMap = {
   roads: [rect(0, 10, 18, 276), rect(0, 0, 254, 18), rect(-70, -40, 16, 106), rect(70, -40, 16, 106), rect(0, -85, 156, 16), rect(0, 105, 126, 58)],
-  intersections: [{ id: 'central', area: rect(0, 0, 18, 18) }],
+  intersections: [{ id: 'central', area: rect(0, 0, 18, 18) }, { id: 'north', area: rect(0, -85, 18, 16) }, { id: 'corner-w', area: rect(-70, -85, 16, 16) }, { id: 'junction-w', area: rect(-70, 0, 16, 18) }, { id: 'corner-e', area: rect(70, -85, 16, 16) }, { id: 'junction-e', area: rect(70, 0, 16, 18) }],
   approaches: [
     { id: 'central-n', name: 'с юга', intersection: 'central', group: 'ns', dir: { x: 0, z: -1 }, stopLine: [{ x: .5, z: 20 }, { x: 8.5, z: 20 }], heads: [{ x: 10.3, z: 17 }, { x: -10.3, z: 17 }] },
     { id: 'central-s', name: 'с севера', intersection: 'central', group: 'ns', dir: { x: 0, z: 1 }, stopLine: [{ x: -8.5, z: -20 }, { x: -.5, z: -20 }], heads: [{ x: -10.3, z: -17 }, { x: 10.3, z: -17 }] },
@@ -71,6 +71,22 @@ export function approachAhead(map: RoadMap, pose: Point & { heading: number }, r
     if (!best || distance < best.distance) best = { approach, distance };
   }
   return best;
+}
+
+export type Turn = 'straight' | 'right' | 'left' | 'uturn';
+/**
+ * Manoeuvre through an intersection judged by the edge the car leaves through, relative to the entry direction.
+ * Headings alone misjudge tight turns: the car often leaves the box before it has finished turning.
+ */
+export function maneuverThrough(area: Rect, entryHeading: number, exit: Point): Turn {
+  const entry = forwardOf(entryHeading), entryDir = Math.abs(entry.x) > Math.abs(entry.z) ? { x: Math.sign(entry.x), z: 0 } : { x: 0, z: Math.sign(entry.z) };
+  const dx = (exit.x - area.x) / area.halfX, dz = (exit.z - area.z) / area.halfZ;
+  const out = Math.abs(dx) > Math.abs(dz) ? { x: Math.sign(dx), z: 0 } : { x: 0, z: Math.sign(dz) };
+  const along = entryDir.x * out.x + entryDir.z * out.z;
+  if (along > .5) return 'straight';
+  if (along < -.5) return 'uturn';
+  // x east, z south: a positive cross product is a clockwise, i.e. right, turn.
+  return entryDir.x * out.z - entryDir.z * out.x > 0 ? 'right' : 'left';
 }
 
 /** 2D segment intersection, used for line crossing between two fixed steps. */

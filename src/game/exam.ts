@@ -1,0 +1,305 @@
+import { cityMap, forwardOf, inside, maneuverThrough, type Point, type Rect } from './roads.ts';
+import type { VehicleState } from './vehicle.ts';
+import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
+import { laneFromApproach, type ForcedBrake, type TrafficLane, type TrafficSystem } from './traffic.ts';
+import type { Pose, TripJudge, Violation } from './rules.ts';
+
+// Practical exam with an inspector: a fixed loop through the district with slots where situations are staged.
+// Route: start → A (signal, straight) → B (unregulated, left) → west corner (left) → D (T-junction onto the main
+// street, left) → A (right) → optional U-turn → finish. Each selected situation configures one or two slots.
+
+export type SlotId = 'A1' | 'B' | 'D' | 'A2' | 'U';
+export type Compass = 'N' | 'S' | 'E' | 'W';
+/** Diagram in the learner's frame: the learner always enters from the bottom (S). */
+export interface Schema {
+  junction: 'cross' | 'T' | 'road';
+  player: Maneuver;
+  actors: { from: Compass; maneuver: Maneuver; kind: 'car' | 'tram' | 'pedestrian' }[];
+  signs?: string[]; regulator?: boolean; light?: boolean;
+}
+export interface Situation {
+  id: string; title: string; topic: string; summary: string; slots: SlotId[]; ruleIds: string[];
+  status: 'ready' | 'planned'; schema?: Schema;
+}
+
+export const situations: Situation[] = [
+  { id: 'a1-signal', title: 'Регулируемый перекрёсток: прямо', topic: 'Светофор', slots: ['A1'], ruleIds: ['6.2', '6.13', '6.14'], status: 'ready',
+    summary: 'Проезд перекрёстка прямо по сигналам светофора: остановка перед стоп-линией на запрещающий, правило жёлтого сигнала.',
+    schema: { junction: 'cross', player: 'straight', light: true, actors: [{ from: 'E', maneuver: 'straight', kind: 'car' }] } },
+  { id: 'a-regulator', title: 'Регулировщик', topic: 'Регулировщик', slots: ['A1', 'A2'], ruleIds: ['6.10', '6.13', '6.14'], status: 'ready',
+    summary: 'Центральный перекрёсток регулирует сотрудник: проезд прямо и поворот направо по его сигналам, светофор отключён.',
+    schema: { junction: 'cross', player: 'straight', regulator: true, actors: [] } },
+  { id: 'b-right-hand', title: 'Равнозначный перекрёсток: помеха справа', topic: 'Равнозначный перекрёсток', slots: ['B'], ruleIds: ['13.11', '1.2'], status: 'ready',
+    summary: 'Знаков приоритета нет. Поворачивая налево, уступите автомобилю, приближающемуся справа.',
+    schema: { junction: 'cross', player: 'left', actors: [{ from: 'E', maneuver: 'straight', kind: 'car' }] } },
+  { id: 'b-oncoming', title: 'Поворот налево: встречный транспорт', topic: 'Поворот налево', slots: ['B'], ruleIds: ['13.12', '1.2'], status: 'ready',
+    summary: 'При повороте налево на равнозначном перекрёстке уступите встречному автомобилю, движущемуся прямо.',
+    schema: { junction: 'cross', player: 'left', actors: [{ from: 'N', maneuver: 'straight', kind: 'car' }] } },
+  { id: 'b-tram', title: 'Трамвай на равнозначном перекрёстке', topic: 'Трамвай', slots: ['B'], ruleIds: ['13.11', '1.2'], status: 'ready',
+    summary: 'Трамвай приближается слева. На равнозначном перекрёстке он имеет преимущество независимо от направления движения.',
+    schema: { junction: 'cross', player: 'left', actors: [{ from: 'W', maneuver: 'straight', kind: 'tram' }] } },
+  { id: 'd-yield', title: 'Знак «Уступите дорогу»', topic: 'Главная и второстепенная', slots: ['D'], ruleIds: ['sign-2.4', '13.9', '1.2'], status: 'ready',
+    summary: 'Выезд со второстепенной дороги на главную с поворотом налево: уступите транспорту с обеих сторон.',
+    schema: { junction: 'T', player: 'left', signs: ['2.4'], actors: [{ from: 'W', maneuver: 'straight', kind: 'car' }, { from: 'E', maneuver: 'straight', kind: 'car' }] } },
+  { id: 'd-stop', title: 'Знак «Движение без остановки запрещено»', topic: 'Главная и второстепенная', slots: ['D'], ruleIds: ['sign-2.5', '13.9', '1.2'], status: 'ready',
+    summary: 'Полная остановка перед стоп-линией, затем выезд на главную, уступив дорогу.',
+    schema: { junction: 'T', player: 'left', signs: ['2.5'], actors: [{ from: 'W', maneuver: 'straight', kind: 'car' }] } },
+  { id: 'a2-pedestrian', title: 'Поворот направо: пешеходы', topic: 'Пешеходы', slots: ['A2'], ruleIds: ['13.1'], status: 'ready',
+    summary: 'Поворачивая направо на зелёный, уступите пешеходам, переходящим дорогу, на которую вы поворачиваете.',
+    schema: { junction: 'cross', player: 'right', light: true, actors: [{ from: 'E', maneuver: 'straight', kind: 'pedestrian' }] } },
+  { id: 'u-turn', title: 'Разворот вне перекрёстка', topic: 'Разворот', slots: ['U'], ruleIds: ['8.1', '8.5', '8.8', '8.11'], status: 'ready',
+    summary: 'Разворот по команде инспектора: указатель, крайнее левое положение, без выезда за проезжую часть.',
+    schema: { junction: 'road', player: 'uturn', actors: [] } },
+  // Topics frequent in the exam tickets that need new road elements; listed so the catalogue shows what comes next.
+  { id: 'green-left-oncoming', title: 'Налево на зелёный: встречные', topic: 'Светофор', slots: [], ruleIds: ['13.4'], status: 'planned', summary: 'Поворот налево на регулируемом перекрёстке с пропуском встречных.' },
+  { id: 'arrow-section', title: 'Дополнительная секция светофора', topic: 'Светофор', slots: [], ruleIds: [], status: 'planned', summary: 'Движение по стрелке при красном сигнале, п. 13.5.' },
+  { id: 'flashing-yellow', title: 'Мигающий жёлтый, светофор не работает', topic: 'Светофор', slots: [], ruleIds: [], status: 'planned', summary: 'Перекрёсток становится нерегулируемым, п. 13.3.' },
+  { id: 'main-road-turns', title: 'Главная дорога меняет направление', topic: 'Главная и второстепенная', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 2.1 с табличкой 8.13, п. 13.10.' },
+  { id: 'roundabout', title: 'Круговое движение', topic: 'Перекрёстки', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 4.3, п. 13.11(1).' },
+  { id: 'regulator-tram', title: 'Трамвай и регулировщик', topic: 'Трамвай', slots: [], ruleIds: [], status: 'planned', summary: 'Разные разрешения трамваю и безрельсовым ТС, п. 6.10, 13.6.' },
+  { id: 'tram-left-turn', title: 'Налево с трамвайных путей', topic: 'Трамвай', slots: [], ruleIds: [], status: 'planned', summary: 'Поворот налево с путей попутного направления, п. 8.5.' },
+  { id: 'crosswalk', title: 'Нерегулируемый пешеходный переход', topic: 'Пешеходы', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 5.19.1/5.19.2, п. 14.1–14.2.' },
+  { id: 'railway', title: 'Железнодорожный переезд', topic: 'Переезды', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 15 ПДД, знаки 1.1–1.4.' },
+  { id: 'overtaking', title: 'Обгон и встречная полоса', topic: 'Обгон', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 11, разметка 1.1, знак 3.20.' },
+  { id: 'stopping', title: 'Остановка и стоянка', topic: 'Остановка и стоянка', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 12, знаки 3.27–3.30.' },
+  { id: 'lanes', title: 'Направления по полосам', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 5.15.1, 5.15.2, п. 8.5.' },
+  { id: 'lane-change', title: 'Перестроение', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'Уступить попутным, п. 8.4.' },
+  { id: 'adjacent', title: 'Выезд с прилегающей территории', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'П. 8.3.' },
+  { id: 'one-way', title: 'Одностороннее движение, въезд запрещён', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 3.1, 5.5–5.7.' },
+  { id: 'no-turn', title: 'Запрет поворота и разворота', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 3.18.1, 3.18.2, 3.19.' },
+  { id: 'residential', title: 'Жилая зона', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 5.21, раздел 17.' },
+];
+export const readySituations = situations.filter(s => s.status === 'ready');
+const byId = (id: string) => situations.find(s => s.id === id);
+
+/** Situations can share the exam only if they do not claim the same slot. */
+export function compatible(ids: string[]) {
+  const used = new Set<SlotId>();
+  for (const id of ids) for (const slot of byId(id)?.slots ?? []) { if (used.has(slot)) return false; used.add(slot); }
+  return true;
+}
+export function randomSelection(random: () => number = Math.random, count = 3 + Math.floor(random() * 2)) {
+  const pool = [...readySituations].sort(() => random() - .5), chosen: string[] = [];
+  for (const s of pool) if (chosen.length < count && compatible([...chosen, s.id])) chosen.push(s.id);
+  return chosen;
+}
+
+export type NodeId = 'A' | 'B' | 'CW' | 'D' | 'CE' | 'E';
+const area = (id: string) => cityMap.intersections.find(i => i.id === id)!.area;
+export const nodes: Record<NodeId, Rect> = { A: area('central'), B: area('north'), CW: area('corner-w'), D: area('junction-w'), CE: area('corner-e'), E: area('junction-e') };
+
+export interface RouteStep { kind: 'start' | 'node' | 'uturn' | 'finish'; node?: NodeId; maneuver?: Maneuver; slot?: SlotId; command: string; }
+export const uTurnZone: Rect = { x: 0, z: 52, halfX: 9, halfZ: 20 };
+export const stopLineD: [Point, Point] = [{ x: -77.5, z: -10.5 }, { x: -70.5, z: -10.5 }];
+export function finishZone(selected: string[]): Point { return selected.includes('u-turn') ? { x: 4.5, z: 34 } : { x: -4.5, z: 45 }; }
+
+export function buildRoute(selected: string[]): RouteStep[] {
+  const regulator = selected.includes('a-regulator');
+  const steps: RouteStep[] = [
+    { kind: 'start', command: 'Экзамен начался. Пристегнитесь, начинайте движение и двигайтесь прямо.' },
+    { kind: 'node', node: 'A', maneuver: 'straight', slot: 'A1', command: regulator ? 'На перекрёстке работает регулировщик. Двигайтесь прямо.' : 'На перекрёстке со светофором двигайтесь прямо.' },
+    { kind: 'node', node: 'B', maneuver: 'left', slot: 'B', command: 'На следующем перекрёстке поверните налево.' },
+    { kind: 'node', node: 'CW', maneuver: 'left', command: 'В конце улицы поверните налево.' },
+    { kind: 'node', node: 'D', maneuver: 'left', slot: 'D', command: 'На перекрёстке с главной дорогой поверните налево.' },
+    { kind: 'node', node: 'A', maneuver: 'right', slot: 'A2', command: 'На перекрёстке поверните направо.' },
+  ];
+  if (selected.includes('u-turn')) steps.push({ kind: 'uturn', slot: 'U', command: 'Развернитесь в удобном месте, где это разрешено.' });
+  steps.push({ kind: 'finish', command: 'Остановитесь в правой полосе в зелёной зоне.' });
+  return steps;
+}
+
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+export function classifyManeuver(entryHeading: number, exitHeading: number): Maneuver {
+  const turn = wrap(exitHeading - entryHeading);
+  if (Math.abs(turn) < .6) return 'straight';
+  if (Math.abs(turn) > 2.4) return 'uturn';
+  return turn > 0 ? 'right' : 'left';
+}
+export const maneuverLabel: Record<Maneuver, string> = { straight: 'прямо', right: 'направо', left: 'налево', uturn: 'разворот' };
+
+// One-shot lanes for staged participants.
+const westAtB: TrafficLane = { id: 'b-west', axis: 'x', sign: -1, offset: -89, start: -78, end: 78, loop: false };
+const southFromB = laneFromApproach('b-south', cityMap.approaches.find(a => a.id === 'central-s')!, -128, 70, false);
+export const tramTrack: TrafficLane = { id: 'tram', axis: 'x', sign: 1, offset: -82, start: -78, end: 78, loop: false };
+
+export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; }
+const CROSSWALK_Z = 15, CROSSWALK_HALF = 8.5;
+
+export interface ExamFrame { prev: Pose; state: VehicleState; time: number; dt: number; traffic: TrafficSystem; forced: ForcedBrake[]; judge: TripJudge; }
+
+export class ExamRunner {
+  readonly steps: RouteStep[];
+  readonly regulator: boolean;
+  readonly stopSign: boolean;
+  readonly tram: boolean;
+  readonly finish: Point;
+  stepIndex = 0;
+  finished = false;
+  failReason: string | null = null;
+  pedestrians: Pedestrian[] = [];
+  private announced = false;
+  private inside = new Map<NodeId, { heading: number; time: number }>();
+  private spawned = new Set<string>();
+  private yieldedCars = new Set<number>();
+  private stopMin = Infinity;
+  private stopChecked = false;
+  private pedestrianFlagged = false;
+  private uTurn: { started: boolean } = { started: false };
+  private finishHold = 0;
+
+  readonly selected: string[];
+  constructor(selected: string[]) {
+    this.selected = selected;
+    this.steps = buildRoute(selected);
+    this.regulator = selected.includes('a-regulator');
+    this.stopSign = selected.includes('d-stop');
+    this.tram = selected.includes('b-tram');
+    this.finish = finishZone(selected);
+  }
+
+  get step() { return this.steps[Math.min(this.stepIndex, this.steps.length - 1)]; }
+  /** Selected situation staged at the current step, used to attribute violations in the debrief. */
+  currentSituation(): string | undefined {
+    const slot = this.step.slot; if (!slot) return undefined;
+    return this.selected.find(id => byId(id)?.slots.includes(slot));
+  }
+  attribute(v: Violation) { v.situation ??= this.currentSituation(); }
+
+  private advance(say: string[]) { this.stepIndex++; this.announced = false; this.announce(say); }
+  private announce(say: string[]) { if (!this.announced && !this.finished) { this.announced = true; say.push(this.step.command); } }
+  private fail(frame: ExamFrame, detail: string, say: string[]) {
+    frame.judge.record('route', frame.time, frame.state, detail, { situation: this.currentSituation() });
+    this.finished = true; this.failReason = detail; say.push('Вы отклонились от маршрута. Экзамен прекращён.');
+  }
+
+  /** One fixed step. Returns phrases the inspector says. */
+  update(frame: ExamFrame): string[] {
+    const say: string[] = [];
+    if (this.finished) return say;
+    const { state } = frame;
+    if (this.step.kind === 'start') { this.announce(say); if (Math.abs(state.speed) > .5) this.advance(say); return say; }
+    this.announce(say);
+    this.trackNodes(frame, say);
+    if (this.finished) return say;
+    this.stage(frame);
+    this.judgeYield(frame);
+    this.judgeStopSign(frame);
+    this.updatePedestrians(frame);
+    if (this.step.kind === 'uturn') this.judgeUTurn(frame, say);
+    if (this.step.kind === 'finish') {
+      const inZone = Math.abs(state.x - this.finish.x) < 1.6 && Math.abs(state.z - this.finish.z) < 3.6;
+      this.finishHold = inZone && Math.abs(state.speed) < .1 ? this.finishHold + frame.dt : 0;
+      if (this.finishHold > 1) { this.finished = true; say.push('Экзамен окончен. Поставьте автомобиль на ручник, разберём ошибки.'); }
+    }
+    return say;
+  }
+
+  private trackNodes(frame: ExamFrame, say: string[]) {
+    const { state, time } = frame;
+    for (const id of Object.keys(nodes) as NodeId[]) {
+      const isInside = inside(nodes[id], state), entry = this.inside.get(id);
+      if (isInside && !entry) this.inside.set(id, { heading: state.heading, time });
+      if (isInside || !entry) continue;
+      this.inside.delete(id);
+      const maneuver = maneuverThrough(nodes[id], entry.heading, state), step = this.step;
+      if (step.kind !== 'node' || step.node !== id) { this.fail(frame, 'Перекрёсток проехан не по заданному маршруту.', say); return; }
+      if (maneuver !== step.maneuver) { this.fail(frame, `Задание: ${maneuverLabel[step.maneuver!]}, выполнено: ${maneuverLabel[maneuver]}.`, say); return; }
+      if (id === 'A' && this.regulator) this.judgeRegulator(frame, entry, maneuver);
+      this.advance(say);
+    }
+  }
+
+  /** PDD 6.10: the manoeuvre must be permitted by the pose shown when the car entered the intersection (6.14 grace of 2 s). */
+  private judgeRegulator(frame: ExamFrame, entry: { heading: number; time: number }, maneuver: Maneuver) {
+    const dir = forwardOf(entry.heading);
+    const allowedAt = (t: number) => { const phase = regulatorAt(t); return { phase, side: sideOf(phase.facing, dir), ok: allowedManeuvers(phase.pose, sideOf(phase.facing, dir)).includes(maneuver) }; };
+    const now = allowedAt(entry.time), before = allowedAt(entry.time - 2);
+    if (now.ok || before.ok) return;
+    frame.judge.record('regulator', frame.time, frame.state, `Регулировщик: ${poseLabel[now.phase.pose]}, вы подъехали ${sideLabel[now.side]}. Манёвр «${maneuverLabel[maneuver]}» был запрещён.`, { situation: 'a-regulator' });
+  }
+
+  /** Brings the staged participant to the conflict point at about the same time as the learner. */
+  private stage(frame: ExamFrame) {
+    const { state, traffic } = frame, speed = Math.max(Math.abs(state.speed), 5), slot = this.step.slot;
+    const once = (key: string, fn: () => void) => { if (!this.spawned.has(key)) { this.spawned.add(key); fn(); } };
+    if (slot === 'B' && state.z < -30) {
+      const eta = Math.max(0, state.z + 77) / speed;
+      if (this.selected.includes('b-right-hand')) once('b', () => traffic.spawn(westAtB, Math.max(-76, -9 - eta * 9 - 2), { v0: 9, color: '#b5654f' }));
+      if (this.selected.includes('b-oncoming')) once('b', () => traffic.spawn(southFromB, Math.max(-126, -93 - eta * 9 - 2), { v0: 9, color: '#5f7f9a' }));
+      if (this.selected.includes('b-tram')) once('b', () => traffic.spawn(tramTrack, Math.max(-70, -9 - eta * 8 - 7.5), { v0: 8, kind: 'tram', halfLength: 7.5, color: '#d24d3c' }));
+    }
+    if (slot === 'D' && state.z > -50 && state.x < -60 && (this.selected.includes('d-yield') || this.selected.includes('d-stop'))) {
+      const eta = Math.max(0, -10.5 - state.z) / speed + (this.stopSign ? 3 : 1);
+      const lane = (id: string) => traffic.cars.find(c => c.lane.id === id)?.lane;
+      once('d', () => {
+        const west = lane('west'), east = lane('east');
+        const free = (l: TrafficLane, s: number) => traffic.cars.every(c => c.lane !== l || Math.abs(c.s - s) > 14);
+        if (west) { const s = 62 - eta * 11 - 2; if (free(west, s)) traffic.spawn(west, s, { color: '#7a8f6a' }); }
+        if (east) { const s = Math.max(-124, -78 - (eta + 2) * 11 - 2); if (free(east, s)) traffic.spawn(east, s, { color: '#9a7fa6' }); }
+      });
+    }
+    if (slot === 'A2' && this.selected.includes('a2-pedestrian') && state.x > -60 && state.z < 9) {
+      once('peds', () => { this.pedestrians = [{ x: 7, z: CROSSWALK_Z - .5, dir: -1, speed: 1.25, waiting: false }, { x: -8.5, z: CROSSWALK_Z + .6, dir: 1, speed: 1, waiting: false }]; });
+    }
+  }
+
+  private judgeYield(frame: ExamFrame) {
+    for (const { car } of frame.forced) {
+      if (this.yieldedCars.has(car.id)) continue;
+      this.yieldedCars.add(car.id);
+      const situation = this.currentSituation();
+      const rule = situation === 'b-right-hand' ? { rule: 'ПДД 13.11', ruleIds: ['13.11', '1.2'], detail: 'Автомобиль справа на равнозначном перекрёстке был вынужден тормозить.' }
+        : situation === 'b-oncoming' ? { rule: 'ПДД 13.12', ruleIds: ['13.12', '1.2'], detail: 'При повороте налево встречный автомобиль был вынужден тормозить.' }
+        : situation === 'b-tram' || car.kind === 'tram' ? { rule: 'ПДД 13.11', ruleIds: ['13.11', '1.2'], detail: 'Трамвай, имеющий преимущество, был вынужден тормозить.' }
+        : situation === 'd-stop' ? { rule: 'ПДД 13.9, знак 2.5', ruleIds: ['sign-2.5', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
+        : situation === 'd-yield' || this.step.slot === 'D' ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
+        : { rule: 'ПДД 1.2', ruleIds: ['1.2'], detail: 'Другой участник движения был вынужден резко тормозить из-за вашего манёвра.' };
+      frame.judge.record('yield', frame.time, frame.state, rule.detail, { rule: rule.rule, ruleIds: rule.ruleIds, situation });
+    }
+  }
+
+  /** Sign 2.5: a full stop is required before the stop line. */
+  private judgeStopSign(frame: ExamFrame) {
+    if (!this.stopSign || this.stopChecked || this.step.slot !== 'D') return;
+    const { state } = frame;
+    if (state.x < -78 || state.x > -62 || Math.cos(state.heading) > -.7) return;
+    const front = state.z + 2.05, toLine = stopLineD[0].z - front;
+    if (toLine >= 0 && toLine <= 8) this.stopMin = Math.min(this.stopMin, Math.abs(state.speed));
+    if (toLine < 0) {
+      this.stopChecked = true;
+      if (this.stopMin > .15) frame.judge.record('stop-sign', frame.time, state, 'Перед стоп-линией нужна полная остановка, даже если на главной дороге никого нет.', { situation: 'd-stop' });
+    }
+  }
+
+  private updatePedestrians(frame: ExamFrame) {
+    if (!this.pedestrians.length) return;
+    const { state, dt } = frame;
+    const carOnCrossing = Math.abs(state.z - CROSSWALK_Z) < 3.2 && Math.abs(state.x) < CROSSWALK_HALF + .5;
+    for (const p of this.pedestrians) {
+      // Pedestrians stop rather than walk into the car standing on their path.
+      p.waiting = Math.abs(p.x + p.dir * 1.2 - state.x) < 1.6 && Math.abs(p.z - state.z) < 2.6;
+      if (!p.waiting) p.x += p.dir * p.speed * dt;
+      if (Math.abs(p.x) > CROSSWALK_HALF) { p.x = Math.sign(p.x) * CROSSWALK_HALF; p.dir = (-p.dir) as 1 | -1; }
+      if (carOnCrossing && Math.abs(state.speed) > .3 && !this.pedestrianFlagged && Math.abs(p.x - state.x) < 3.2) {
+        this.pedestrianFlagged = true;
+        frame.judge.record('pedestrian', frame.time, state, 'Пешеход переходил проезжую часть, на которую вы поворачивали.', { situation: 'a2-pedestrian' });
+      }
+    }
+    if (this.stepIndex > this.steps.findIndex(s => s.slot === 'A2') && state.z > 30) this.pedestrians = [];
+  }
+
+  private judgeUTurn(frame: ExamFrame, say: string[]) {
+    const { state, time, judge } = frame;
+    if (!inside(uTurnZone, state)) {
+      if (state.z > uTurnZone.z + uTurnZone.halfZ + 2) this.fail(frame, 'Разворот не выполнен.', say);
+      return;
+    }
+    const fromSouthbound = wrap(state.heading - Math.PI);
+    if (!this.uTurn.started && Math.abs(fromSouthbound) > .3) {
+      this.uTurn.started = true;
+      if (!judge.signalRecently('left', time)) judge.record('turn-signal', time, state, 'Перед разворотом не был включён левый указатель поворота.', { situation: 'u-turn' });
+      if (state.x < -5.5) judge.record('u-turn', time, state, 'Разворот начат от правого края при достаточной ширине проезжей части.', { situation: 'u-turn' });
+    }
+    if (this.uTurn.started && Math.abs(wrap(state.heading)) < .5) this.advance(say);
+  }
+}

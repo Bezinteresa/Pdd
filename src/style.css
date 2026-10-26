@@ -75,3 +75,93 @@
 .aux-controls i{width:5px;height:5px}
 @media(max-width:1150px){.aux-controls button{font-size:9.5px;padding:10px 6px}.aux-controls svg{width:18px;height:18px}}
 @media(max-height:600px) and (orientation:landscape){.aux-controls button{font-size:8.5px;padding:7px 5px}.aux-controls svg{width:15px;height:15px}.aux-controls i{width:4px;height:4px}}
+
+/* Practice screen: header + simulator fill the window exactly, no page scroll (vh fallback for older browsers) */
+.app-shell.practice-mode{height:100vh;height:100dvh;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.practice-mode .app-header{flex:0 0 auto;width:100%}
+.practice-mode .practice-layout{flex:1 1 auto;height:auto;min-height:0;max-height:none;width:100%}
+
+/* Belt and handbrake stacked to the left of the brake pedal; the instrument cluster drops to wheel level */
+.pedals-area{flex-direction:row;align-items:flex-end;flex-basis:auto;gap:10px}
+.pedals-area .aux-controls{flex-direction:column;width:auto;gap:8px}
+.pedals-area .aux-controls button{width:96px;justify-content:flex-start}
+.center-controls{padding-bottom:30px}
+@media(max-width:1150px){.pedals-area .aux-controls button{width:84px}.center-controls{padding-bottom:24px}}
+@media(max-height:600px) and (orientation:landscape){.pedals-area{gap:6px}.pedals-area .aux-controls{gap:5px}.pedals-area .aux-controls button{width:74px}.center-controls{padding-bottom:16px}}
+
+/* Fullscreen hint: a frame collapsing into the button, then a pulsing label next to it */
+.fs-hint{position:absolute;inset:0;z-index:6;pointer-events:none}
+.fs-hint-frame{position:absolute;inset:8px;border:3px solid #f6fbe2;border-radius:14px;box-shadow:0 0 0 2000px #10201a33,0 0 18px #f6fbe2aa;transform-origin:calc(100% - 32px) 30px;animation:fs-collapse 1.7s ease-in 3 forwards}
+.fs-hint-label{position:absolute;top:66px;right:14px;padding:7px 11px;border-radius:8px;background:#f6fbe2;color:#284d3e;font-size:12px;font-weight:650;box-shadow:0 4px 14px #0003;animation:fs-label 1.2s ease-in-out infinite alternate}
+.fs-hint-label::after{content:'';position:absolute;right:12px;top:-6px;border:6px solid transparent;border-top:0;border-bottom-color:#f6fbe2}
+.fullscreen-button.hinted{animation:fs-pulse 1.2s ease-out infinite;background:#f6fbe2}
+@keyframes fs-collapse{0%{transform:scale(1);opacity:1}80%{opacity:.9}100%{transform:scale(.03);opacity:0}}
+@keyframes fs-label{from{transform:translateY(0)}to{transform:translateY(5px)}}
+@keyframes fs-pulse{0%{box-shadow:0 0 0 0 #f6fbe2cc}100%{box-shadow:0 0 0 14px #f6fbe200}}
+@media(max-height:600px) and (orientation:landscape){.fs-hint-frame{transform-origin:calc(100% - 26px) 24px}.fs-hint-label{top:46px;right:8px;font-size:10px;padding:5px 9px}}
+
+/* Phones in landscape: compact instrument cluster sitting low, so the road stays visible */
+@media(max-height:600px) and (orientation:landscape){
+.center-controls{padding-bottom:0;gap:4px}
+.cluster .speedometer{padding:2px 10px 3px;width:104px}
+.cluster .speed-number{font-size:31px;letter-spacing:-1.5px;line-height:1}
+.cluster .speed-unit,.cluster .rpm-line{display:none}
+.cluster .speed-meta{font-size:7px;margin-top:1px}
+.cluster .speed-meta strong{font-size:11px}
+.cluster .signal-controls{height:22px;width:100px}
+.tacho{height:135%}
+.tacho-label{font-size:13px}}
+
+/* Inspector exam */
+.inspector-bubble{position:absolute;top:16px;left:50%;transform:translateX(-50%);max-width:min(520px,44%);padding:9px 14px 10px;border-radius:10px;background:#f8f4dff2;color:#233d34;font-size:13px;font-weight:600;line-height:1.35;text-align:center;box-shadow:0 6px 22px #0003;z-index:5;pointer-events:none}
+.inspector-badge{display:block;font-size:8px;letter-spacing:1.4px;color:#6c8a55;margin-bottom:3px}
+.paused-label .lesson-picker button.exam-entry{background:#c8553fd9;color:#fff8ea}
+.paused-label .lesson-picker button.exam-entry.selected{background:#f8f4df;color:#8e3a2e}
+.exam-steps li{align-items:flex-start}
+.lesson-actions .reset-button+.reset-button{margin-top:8px}
+.exam-modal{width:min(760px,94vw);max-height:90dvh;overflow:auto}
+.exam-modal>p{font-size:12px;line-height:1.6;color:#6f7b69;margin-top:8px}
+.exam-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-top:16px}
+.exam-picker h3{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:#7f8977;margin-bottom:6px}
+.exam-option{display:flex;gap:10px;width:100%;text-align:left;padding:10px;border-radius:9px;border:1px solid var(--line);background:#fff;margin-bottom:6px}
+.exam-option strong{display:block;font-size:12px;font-weight:600;color:#2e4b34}
+.exam-option small{display:block;font-size:10px;line-height:1.5;color:#8b9285;margin-top:3px}
+.exam-option.picked{border-color:#6c8a55;background:#eef2e5}
+.exam-option:disabled{opacity:.45}
+.exam-check{flex:0 0 18px;height:18px;border-radius:5px;border:1.5px solid #9fb08f;display:grid;place-items:center;color:#2e4b34;margin-top:1px}
+.exam-option.picked .exam-check{background:#d9e9b9;border-color:#6c8a55}
+.exam-planned{margin-top:12px;font-size:11px;color:#7f8977}
+.exam-planned summary{cursor:pointer;font-weight:600}
+.exam-planned ul{margin:8px 0 0;padding-left:18px;line-height:1.7}
+.exam-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:18px}
+.exam-actions button{width:auto}
+.debrief h2.verdict-ok{color:#3f7f3a}
+.debrief h2.verdict-fail{color:#a5402f}
+.debrief-card{display:grid;grid-template-columns:150px 1fr;gap:14px;border:1px solid var(--line);border-left:4px solid #6c8a55;border-radius:10px;padding:12px;margin-top:12px;background:#fff}
+.debrief-card.failed{border-left-color:#c65a46}
+.debrief-card:not(:has(.debrief-schema)){grid-template-columns:1fr}
+.debrief-body h3{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600}
+.debrief-body>p{font-size:11px;line-height:1.6;color:#7f8977;margin-top:4px}
+.debrief-error{display:flex;gap:10px;margin-top:10px;align-items:flex-start}
+.debrief-error img{width:150px;border-radius:6px;flex-shrink:0;border:1px solid var(--line)}
+.debrief-error strong{font-size:12px;color:#8e3a2e}
+.debrief-error p{font-size:11px;line-height:1.55;color:#6f7b69;margin-top:2px}
+.debrief-error small{font-size:9px;color:#a3aa98}
+.debrief-ok{font-size:11px;color:#3f7f3a;margin-top:8px}
+.debrief-rules{margin-top:16px}
+.debrief-rules h3{font-size:13px;font-weight:600}
+.rules-edition{font-size:9px;color:#a3aa98;margin:2px 0 6px}
+.debrief-rules details{border-top:1px solid var(--line);padding:8px 0}
+.debrief-rules summary{cursor:pointer;font-size:12px;font-weight:600;color:#3f6147}
+.debrief-rules details p{font-size:11px;line-height:1.65;color:#5f6b5a;margin-top:6px}
+@media(max-height:600px) and (orientation:landscape){.inspector-bubble{top:8px;font-size:10px;padding:5px 9px;max-width:42%}.debrief-card{grid-template-columns:110px 1fr}.debrief-error img{width:110px}}
+@media(max-width:700px){.debrief-card{grid-template-columns:1fr}}
+/* Lesson task above the rear mirror on phones, where the side panel is hidden */
+.task-bubble{display:none}
+@media(max-width:900px),(max-height:600px) and (orientation:landscape){.task-bubble{display:block}}
+
+/* Modals scroll by swipe on every phone: vh fallback where dvh is unknown, and a scrollable backdrop with margin:auto
+   centring so a tall dialog is never cut off at the top */
+.modal-backdrop{display:flex;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+.modal{margin:auto;max-height:90vh;max-height:90dvh;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+.exam-modal{max-height:92vh;max-height:92dvh}

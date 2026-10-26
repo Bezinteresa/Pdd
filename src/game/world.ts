@@ -3,6 +3,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Obstacle } from './vehicle';
 import { cityMap, type Approach } from './roads';
 import type { Lamp, SignalGroup } from './signals';
+import type { Pose } from './regulator';
+import type { Point } from './roads';
 
 export interface SignalHead { group: SignalGroup; red: THREE.MeshBasicMaterial; yellow: THREE.MeshBasicMaterial; green: THREE.MeshBasicMaterial; }
 export interface World { scene: THREE.Scene; obstacles: Obstacle[]; car: THREE.Group; shell: THREE.Group; wheel: THREE.Group; tires: THREE.Group[]; frontTires: THREE.Group[]; goal: THREE.Group; signals: SignalHead[]; }
@@ -135,7 +137,7 @@ export function createWorld(): World {
 
 const lampColors = { red: ['#ff5a45', '#4a3a36'], yellow: ['#ffd04a', '#4a4636'], green: ['#8dff7a', '#36463a'] } as const;
 /** Lights the 3D lamps from the logical state; flashing green blinks at 1 Hz like a real signal. */
-export function paintSignal(head: SignalHead, lamp: Lamp, time: number) {
+export function paintSignal(head: SignalHead, lamp: Lamp | 'off', time: number) {
   const on = { red: lamp === 'red' || lamp === 'redYellow', yellow: lamp === 'yellow' || lamp === 'redYellow', green: lamp === 'green' || (lamp === 'greenFlash' && time % 1 < .5) };
   for (const key of ['red', 'yellow', 'green'] as const) head[key].color.set(lampColors[key][on[key] ? 0 : 1]);
 }
@@ -146,4 +148,74 @@ export function trafficCar(scene: THREE.Scene, color: string) {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .55, .64, sx * .86, .35, sz * 1.25, '#263431');
   for (const x of [-.55, .55]) { box(g, .38, .12, .05, x, .8, -1.96, '#fff2c4'); box(g, .38, .12, .05, x, .8, 1.96, '#c06c55'); }
   return g;
+}
+
+/** Tram body (15 m): the group origin is the vehicle centre, nose towards -z. */
+export function tramCar(scene: THREE.Scene, color: string) {
+  const g = new THREE.Group(); scene.add(g);
+  box(g, 2.5, 2.5, 15, 0, 1.75, 0, color); box(g, 2.52, .9, 15.02, 0, 2.1, 0, '#3c4f55'); box(g, 2.3, .25, 14.6, 0, 3.12, 0, '#e9e1cf');
+  box(g, .1, 1.2, .1, 0, 3.8, 0, '#2a3530'); box(g, 1.4, .06, .3, 0, 4.4, 0, '#2a3530');
+  for (const x of [-.7, .7]) box(g, .35, .14, .05, x, 1.1, -7.52, '#fff2c4');
+  return g;
+}
+/** Two rails along x at the given z, from x0 to x1. */
+export function rails(scene: THREE.Scene, z: number, x0: number, x1: number) {
+  const g = new THREE.Group(); scene.add(g);
+  for (const dz of [-.76, .76]) box(g, x1 - x0, .06, .08, (x0 + x1) / 2, .17, z + dz, '#8c948d');
+  for (let x = x0 + 1; x < x1; x += 2.5) box(g, .25, .02, 1.9, x, .15, z, '#4b5650');
+  return g;
+}
+/** A person from boxes; arms hang from shoulder pivots so poses are explicit rotations. */
+function person(scene: THREE.Scene, body: string, accent: string) {
+  const g = new THREE.Group(); scene.add(g);
+  for (const x of [-.11, .11]) box(g, .14, .85, .16, x, .43, 0, '#2c3646');
+  box(g, .46, .62, .26, 0, 1.17, 0, body); box(g, .48, .22, .28, 0, 1.18, 0, accent);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.13, 12, 10), material('#e2b892')); head.position.set(0, 1.66, 0); g.add(head);
+  const arm = (x: number) => { const pivot = new THREE.Group(); pivot.position.set(x, 1.44, 0); g.add(pivot); box(pivot, .11, .6, .12, 0, -.3, 0, body); box(pivot, .12, .12, .13, 0, -.62, 0, '#f4f4ef'); return pivot; };
+  return { group: g, left: arm(-.29), right: arm(.29) };
+}
+export function pedestrianFigure(scene: THREE.Scene, color: string) { return person(scene, color, color).group; }
+export interface RegulatorFigure { group: THREE.Group; setPose(pose: Pose, facing: Point): void; }
+/** Traffic controller: dark uniform, light-green vest, white cap and baton; local forward is -z like the cars. */
+export function regulatorFigure(scene: THREE.Scene): RegulatorFigure {
+  const { group, left, right } = person(scene, '#2f3f5c', '#c9f24d');
+  box(group, .3, .08, .3, 0, 1.82, 0, '#f4f4ef'); box(group, .32, .03, .34, 0, 1.78, -.04, '#1f2a3d');
+  const baton = new THREE.Group(); baton.position.set(0, -.68, 0); right.add(baton);
+  for (let i = 0; i < 4; i++) box(baton, .05, .1, .05, 0, -i * .1, 0, i % 2 ? '#1d2120' : '#f4f4ef');
+  box(group, .7, .05, .7, 0, .03, 0, '#d9d4bb');
+  return {
+    group,
+    setPose(pose, facing) {
+      group.rotation.y = -Math.atan2(facing.x, -facing.z);
+      left.rotation.set(0, 0, 0); right.rotation.set(0, 0, 0);
+      if (pose === 'sides') { left.rotation.z = -Math.PI / 2; right.rotation.z = Math.PI / 2; }
+      if (pose === 'rightForward') right.rotation.x = -Math.PI / 2;
+      if (pose === 'up') right.rotation.z = Math.PI;
+    },
+  };
+}
+function signTexture(code: string) {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  if (code === '2.5') {
+    ctx.beginPath(); for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx.lineTo(128 + Math.cos(a) * 124, 128 + Math.sin(a) * 124); } ctx.closePath();
+    ctx.fillStyle = '#c8302a'; ctx.fill(); ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = '700 74px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('STOP', 128, 132);
+  } else {
+    ctx.beginPath(); ctx.moveTo(8, 20); ctx.lineTo(248, 20); ctx.lineTo(128, 236); ctx.closePath(); ctx.fillStyle = '#c8302a'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(48, 44); ctx.lineTo(208, 44); ctx.lineTo(128, 188); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
+  }
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
+}
+/** Sign on a post; `facing` is the direction its face points (towards the drivers it addresses). */
+export function roadSign(scene: THREE.Scene, code: string, at: Point, facing: Point) {
+  const g = new THREE.Group(); g.position.set(at.x, 0, at.z); g.rotation.y = Math.atan2(facing.x, facing.z); scene.add(g);
+  box(g, .09, 2.6, .09, 0, 1.3, 0, '#8b9690');
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: signTexture(code), transparent: true, side: THREE.DoubleSide })); face.position.set(0, 2.55, .06); g.add(face);
+  return g;
+}
+/** Removes a prop group and frees what it owns; shared materials from the cache stay. */
+export function disposeProp(object: THREE.Object3D) {
+  object.removeFromParent();
+  object.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); const m = o.material as THREE.Material & { map?: THREE.Texture | null }; if (![...materials.values()].includes(m as THREE.MeshStandardMaterial)) { m.map?.dispose(); m.dispose(); } } });
 }

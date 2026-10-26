@@ -1,22 +1,28 @@
-import { approachAhead, distanceToStopLine, forwardOf, inside, onRoad, segmentsCross, speedLimitAt, type Point, type RoadMap } from './roads.ts';
+import { approachAhead, distanceToStopLine, forwardOf, inside, maneuverThrough, onRoad, segmentsCross, speedLimitAt, type Point, type RoadMap } from './roads.ts';
 import { lampLabel, permits, type Lamps } from './signals.ts';
 import type { VehicleState } from './vehicle.ts';
 
-export type ViolationCode = 'belt' | 'speed' | 'red-light' | 'yellow-light' | 'turn-signal' | 'off-road' | 'collision';
-export interface Violation { id: number; code: ViolationCode; time: number; x: number; z: number; title: string; detail: string; rule: string | null; }
+export type ViolationCode = 'belt' | 'speed' | 'red-light' | 'yellow-light' | 'turn-signal' | 'off-road' | 'collision' | 'yield' | 'stop-sign' | 'pedestrian' | 'regulator' | 'route' | 'u-turn';
+export interface Violation { id: number; code: ViolationCode; time: number; x: number; z: number; title: string; detail: string; rule: string | null; ruleIds: string[]; situation?: string; }
 export type TripEventKind = 'start' | 'stop' | 'stop-line' | 'enter-intersection' | 'exit-intersection' | 'signal' | 'collision';
 export interface TripEvent { time: number; kind: TripEventKind; x: number; z: number; info?: string; }
 export type Pose = Pick<VehicleState, 'x' | 'z' | 'heading'>;
 
 // PDD references follow the Russian Traffic Rules; re-check wording against the current edition before release.
-const catalog: Record<ViolationCode, { title: string; rule: string | null }> = {
-  belt: { title: 'Движение без ремня безопасности', rule: 'ПДД 2.1.2' },
-  speed: { title: 'Превышение скорости', rule: 'ПДД 10.1, 10.2' },
-  'red-light': { title: 'Проезд на запрещающий сигнал', rule: 'ПДД 6.2, 6.13' },
-  'yellow-light': { title: 'Проезд на жёлтый, когда можно было остановиться', rule: 'ПДД 6.2, 6.14' },
-  'turn-signal': { title: 'Поворот без указателя поворота', rule: 'ПДД 8.1, 8.2' },
-  'off-road': { title: 'Выезд за пределы проезжей части', rule: 'ПДД 9.9' },
-  collision: { title: 'Столкновение', rule: 'ПДД 9.10, 10.1' },
+const catalog: Record<ViolationCode, { title: string; rule: string | null; ruleIds: string[] }> = {
+  belt: { title: 'Движение без ремня безопасности', rule: 'ПДД 2.1.2', ruleIds: ['2.1.2'] },
+  speed: { title: 'Превышение скорости', rule: 'ПДД 10.1, 10.2', ruleIds: ['10.2'] },
+  'red-light': { title: 'Проезд на запрещающий сигнал', rule: 'ПДД 6.2, 6.13', ruleIds: ['6.2', '6.13'] },
+  'yellow-light': { title: 'Проезд на жёлтый, когда можно было остановиться', rule: 'ПДД 6.2, 6.14', ruleIds: ['6.2', '6.14'] },
+  'turn-signal': { title: 'Манёвр без указателя поворота', rule: 'ПДД 8.1, 8.2', ruleIds: ['8.1', '8.2'] },
+  'off-road': { title: 'Выезд за пределы проезжей части', rule: 'ПДД 9.9', ruleIds: ['9.9'] },
+  collision: { title: 'Столкновение', rule: 'ПДД 9.10, 10.1', ruleIds: [] },
+  yield: { title: 'Не уступил дорогу', rule: 'ПДД 1.2, 13.9', ruleIds: ['1.2', '13.9'] },
+  'stop-sign': { title: 'Проезд знака «STOP» без остановки', rule: 'ПДД, знак 2.5', ruleIds: ['sign-2.5'] },
+  pedestrian: { title: 'Не уступил дорогу пешеходу', rule: 'ПДД 13.1', ruleIds: ['13.1'] },
+  regulator: { title: 'Манёвр, запрещённый регулировщиком', rule: 'ПДД 6.10, 6.13', ruleIds: ['6.10', '6.13'] },
+  route: { title: 'Не выполнено задание инспектора', rule: null, ruleIds: [] },
+  'u-turn': { title: 'Разворот не из крайнего левого положения', rule: 'ПДД 8.5', ruleIds: ['8.5'] },
 };
 
 const HALF_WIDTH = .94, HALF_LENGTH = 2.05;
@@ -29,7 +35,6 @@ export function frontPoints(p: Pose): Point[] {
   const c = { x: p.x + f.x * HALF_LENGTH, z: p.z + f.z * HALF_LENGTH };
   return [c, { x: c.x + r.x * HALF_WIDTH, z: c.z + r.z * HALF_WIDTH }, { x: c.x - r.x * HALF_WIDTH, z: c.z - r.z * HALF_WIDTH }];
 }
-const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
  * Trip judge: turns fixed-step vehicle states into events and violations.
@@ -55,11 +60,16 @@ export class TripJudge {
   private map: RoadMap;
   constructor(map: RoadMap) { this.map = map; for (const a of map.approaches) this.armed.set(a.id, true); }
 
-  private add(code: ViolationCode, time: number, at: Point, detail: string) {
-    const v: Violation = { id: this.nextId++, code, time, x: at.x, z: at.z, detail, ...catalog[code] };
+  private add(code: ViolationCode, time: number, at: Point, detail: string) { return this.record(code, time, at, detail); }
+  /** Records a violation found by another checker (the exam), sharing ids and the trip log. */
+  record(code: ViolationCode, time: number, at: Point, detail: string, override: Partial<Pick<Violation, 'title' | 'rule' | 'ruleIds' | 'situation'>> = {}) {
+    const v: Violation = { id: this.nextId++, code, time, x: at.x, z: at.z, detail, ...catalog[code], ...override };
     this.violations.push(v); return v;
   }
   private event(kind: TripEventKind, time: number, at: Point, info?: string) { this.events.push({ kind, time, x: at.x, z: at.z, info }); }
+
+  /** Whether the given turn signal was on within the last `window` seconds. */
+  signalRecently(side: 'left' | 'right', time: number, window = SIGNAL_MEMORY) { return this.signalSeen[side] >= time - window; }
 
   /** Advance one fixed step. Returns violations recorded during this step. */
   update(prev: Pose, state: VehicleState, time: number, lamps: Lamps, collided = false): Violation[] {
@@ -117,8 +127,8 @@ export class TripJudge {
       if (isInside && !entry) { this.inIntersection.set(crossing.id, { heading: state.heading, left: this.signalSeen.left >= time - SIGNAL_MEMORY, right: this.signalSeen.right >= time - SIGNAL_MEMORY }); this.event('enter-intersection', time, state, crossing.id); }
       if (!isInside && entry) {
         this.inIntersection.delete(crossing.id); this.event('exit-intersection', time, state, crossing.id);
-        const turn = wrapAngle(state.heading - entry.heading);
-        const side = turn > .9 && turn < 2.4 ? 'right' : turn < -.9 && turn > -2.4 ? 'left' : null;
+        const turn = maneuverThrough(crossing.area, entry.heading, state);
+        const side = turn === 'right' || turn === 'left' ? turn : null;
         if (side && !entry[side]) this.add('turn-signal', time, state, `${side === 'right' ? 'Правый' : 'Левый'} поворот выполнен без заблаговременно включённого указателя.`);
       }
     }

@@ -1,9 +1,13 @@
 import * as THREE from 'three';
-import { createWorld } from './world';
+import { createWorld, paintSignal, trafficCar } from './world';
 import { clamp, initialVehicle, selectGear, stepVehicle, type Gear, type DriveInput, type VehicleState } from './vehicle';
-import { nextLessonStep } from './lesson';
+import { lessons, type Lesson } from './lesson';
+import { activeZone, approachAhead, cityMap } from './roads';
+import { lampsAt, type Lamp } from './signals';
+import { TripJudge, type Violation } from './rules';
+import { carPosition, crossStreetLanes, TrafficSystem } from './traffic';
 
-export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; }
+export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonId: string; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; violations: Violation[]; signalAhead: { lamp: Lamp; distance: number } | null; tripTime: number; }
 export type CameraMode = 'cockpit' | 'chase';
 export type Look = 'forward' | 'left' | 'rear' | 'right';
 export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; }
@@ -33,6 +37,12 @@ export class DrivingEngine {
   private suspended = false;
   private cameraReady = false;
   private lessonStep = 0;
+  private lesson: Lesson = lessons[0];
+  private simTime = 0;
+  private judge = new TripJudge(cityMap);
+  private traffic = new TrafficSystem(crossStreetLanes(cityMap));
+  private trafficMeshes = this.traffic.cars.map(car => trafficCar(this.world.scene, car.color));
+  private violationsSent = -1;
   private complete = false;
   private pan = 0;
   private lastHeading = 0;
@@ -60,7 +70,8 @@ export class DrivingEngine {
   setLook(look: Look) { this.look = look; }
   setPaused(value: boolean) { this.paused = value; this.releaseInput(); this.accumulator = 0; }
   releaseInput() { this.keys.clear(); this.input.throttle = this.input.brake = this.input.steer = 0; }
-  reset() { Object.assign(this.state, initialVehicle()); this.lessonStep = 0; this.complete = false; this.collisions = 0; this.cameraReady = false; this.look = 'forward'; this.notify('Автомобиль возвращён на старт'); }
+  reset(message = 'Автомобиль возвращён на старт') { Object.assign(this.state, initialVehicle()); this.lessonStep = 0; this.complete = false; this.collisions = 0; this.cameraReady = false; this.look = 'forward'; this.simTime = 0; this.judge = new TripJudge(cityMap); this.traffic = new TrafficSystem(crossStreetLanes(cityMap)); this.violationsSent = -1; this.notify(message); }
+  setLesson(id: string) { const lesson = lessons.find(l => l.id === id); if (!lesson) return; this.lesson = lesson; this.world.goal.position.set(lesson.goal.x, .17, lesson.goal.z); this.reset(`Занятие: ${lesson.title}`); }
   gear(gear: Gear) { const error = selectGear(this.state, gear, Math.max(this.input.brake, this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0)); if (error) this.notify(error); }
   toggleBelt() { this.state.belt = !this.state.belt; }
   toggleHandbrake() { this.state.handbrake = !this.state.handbrake; }
@@ -90,28 +101,42 @@ export class DrivingEngine {
       const brake = Math.max(this.input.brake, this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
       const steer = this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? -1 : this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : this.input.steer;
       while (this.accumulator >= 1 / 60) {
-        const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles);
-        if (hit && now - this.collisionAt > 1500) { this.collisions++; this.collisionAt = now; this.notify('Столкновение. Снизьте скорость и проверьте габариты'); }
+        // One fixed step: signals, traffic, the learner's car and the judge share the same simulation time.
+        const lamps = lampsAt(this.simTime);
+        const prev = { x: this.state.x, z: this.state.z, heading: this.state.heading };
+        this.traffic.step(1 / 60, lamps, this.state);
+        const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles.concat(this.traffic.obstacles()));
+        const counted = hit && now - this.collisionAt > 1500;
+        if (counted) { this.collisions++; this.collisionAt = now; }
+        const found = this.judge.update(prev, this.state, this.simTime, lamps, counted);
+        if (found.length) this.notify(`${found[found.length - 1].title}${found[found.length - 1].rule ? ` · ${found[found.length - 1].rule}` : ''}`);
+        this.simTime += 1 / 60;
         this.accumulator -= 1 / 60;
       }
       this.updateLesson();
       if (this.state.signal && this.state.signal !== 'hazard') { this.turnAmount += this.state.heading - this.lastHeading; const matched = this.state.signal === 'right' ? this.turnAmount > .5 : this.turnAmount < -.5; if (matched && Math.abs(this.state.steer) < .08) { this.state.signal = null; this.turnAmount = 0; } }
     }
     this.lastHeading = this.state.heading;
-    this.updateCar(dt); this.updateCamera(dt);
+    this.updateCar(dt); this.updateTraffic(); this.updateCamera(dt);
     this.render(now);
     this.frames++; if (now - this.fpsAt >= 1000) { this.fps = Math.round(this.frames * 1000 / (now - this.fpsAt)); this.frames = 0; this.fpsAt = now; }
-    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.input.throttle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: this.state.z < 57 && this.state.z > 20 && Math.abs(this.state.x) < 9 ? 30 : null, collisions: this.collisions }); }
+    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.input.throttle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonId: this.lesson.id, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: activeZone(cityMap, this.state)?.limit ?? null, collisions: this.collisions, violations: this.judge.violations.length === this.violationsSent ? this.judge.violations : [...this.judge.violations], signalAhead: this.signalAhead(), tripTime: this.simTime }); this.violationsSent = this.judge.violations.length; }
   };
+  private signalAhead() { const ahead = approachAhead(cityMap, this.state); return ahead ? { lamp: lampsAt(this.simTime)[ahead.approach.group], distance: ahead.distance } : null; }
   private updateLesson() {
-    const next = nextLessonStep(this.lessonStep, this.state);
+    const steps = this.lesson.steps.length;
+    const next = this.lesson.next(this.lessonStep, this.state, { passedLegally: this.judge.passedLegally });
     if (next !== this.lessonStep) {
-      if (next === 3) this.notify('Остановитесь в зелёной зоне впереди');
-      if (next === 4) this.notify('Зафиксируйте автомобиль: ручник и P');
-      if (next === 5) { this.complete = true; this.notify('Урок пройден! Можно продолжить свободную поездку'); }
+      if (next === steps) { this.complete = true; const errors = this.judge.violations.length; this.notify(errors ? `Урок пройден с ошибками: ${errors}. Разбор — в журнале поездки` : 'Урок пройден без ошибок! Можно продолжить свободную поездку'); }
+      else if (next > this.lessonStep) this.notify(this.lesson.steps[next]);
       this.lessonStep = next;
     }
     this.world.goal.visible = this.lessonStep >= 2 && !this.complete;
+  }
+  private updateTraffic() {
+    this.traffic.cars.forEach((car, i) => { const p = carPosition(car); this.trafficMeshes[i].position.set(p.x, 0, p.z); this.trafficMeshes[i].rotation.y = -p.heading; });
+    const lamps = lampsAt(this.simTime);
+    for (const head of this.world.signals) paintSignal(head, lamps[head.group], this.simTime);
   }
   private updateCar(dt: number) {
     const { car, shell, wheel, tires, frontTires } = this.world;

@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Obstacle } from './vehicle';
+import { cityMap, type Approach } from './roads';
+import type { Lamp, SignalGroup } from './signals';
 
-export interface World { scene: THREE.Scene; obstacles: Obstacle[]; car: THREE.Group; shell: THREE.Group; wheel: THREE.Group; tires: THREE.Group[]; frontTires: THREE.Group[]; goal: THREE.Group; }
+export interface SignalHead { group: SignalGroup; red: THREE.MeshBasicMaterial; yellow: THREE.MeshBasicMaterial; green: THREE.MeshBasicMaterial; }
+export interface World { scene: THREE.Scene; obstacles: Obstacle[]; car: THREE.Group; shell: THREE.Group; wheel: THREE.Group; tires: THREE.Group[]; frontTires: THREE.Group[]; goal: THREE.Group; signals: SignalHead[]; }
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 function material(color: string) { if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9 })); return materials.get(color)!; }
 export function box(parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, color: string) {
@@ -49,9 +52,21 @@ export function createWorld(): World {
   for (let x = -121; x < 125; x += 9) if (Math.abs(x) > 14 && Math.abs(Math.abs(x) - 70) > 12) box(scene, 4.2, .015, .16, x, .14, 0, '#e8dfbe');
   for (let z = -75; z < 0; z += 9) for (const x of [-70, 70]) box(scene, .15, .015, 4, x, .14, z, '#ece4ca');
   for (let x = -60; x <= 60; x += 9) if (Math.abs(x) > 12) box(scene, 4.2, .015, .15, x, .14, -85, '#ece4ca');
-  // Crosswalk and stop-line are visible landmarks; judging intersection priority comes later.
-  for (let x = -7; x < 9; x += 2) for (const z of [15, -15]) box(scene, 1.1, .025, 3.5, x, .16, z, '#f2eddb');
-  box(scene, 7.5, .02, .4, 4.5, .15, 20, '#f2eddb');
+  // Crosswalks, stop lines and signal poles come from the same map data the judge uses.
+  for (const c of cityMap.crosswalks) {
+    const alongX = c.halfX > c.halfZ, half = alongX ? c.halfX : c.halfZ;
+    for (let t = -half + 1; t < half; t += 2) box(scene, alongX ? 1.1 : c.halfX * 2, .025, alongX ? c.halfZ * 2 : 1.1, alongX ? c.x + t : c.x, .16, alongX ? c.z : c.z + t, '#f2eddb');
+  }
+  for (const a of cityMap.approaches) { const [p, q] = a.stopLine; box(scene, Math.max(Math.abs(q.x - p.x), .4), .02, Math.max(Math.abs(q.z - p.z), .4), (p.x + q.x) / 2, .15, (p.z + q.z) / 2, '#f2eddb'); }
+  const lampSlots: { approach: Approach; x: number; z: number; rotation: number }[] = [];
+  for (const a of cityMap.approaches) for (const h of a.heads) {
+    // Heads face oncoming traffic of their approach.
+    const rotation = Math.atan2(-a.dir.x, -a.dir.z);
+    box(scene, .13, 3.9, .13, h.x, 1.95, h.z, '#63756d');
+    const housing = box(scene, .52, 1.5, .45, h.x, 3.5, h.z, '#2c3d34'); housing.rotation.y = rotation;
+    lampSlots.push({ approach: a, x: h.x, z: h.z, rotation });
+    obstacles.push({ x: h.x, z: h.z, halfX: .12, halfZ: .12 });
+  }
   for (let i = 0; i < 6; i++) { const x = -48 + i * 5; box(scene, .1, .02, 8, x, .14, 106, '#e5e3d1'); }
   box(scene, 25, .02, .1, -35.5, .14, 102, '#e5e3d1');
   parkedCar(scene, -45.5, 106, '#c4b77c', obstacles); parkedCar(scene, -35.5, 106, '#71939b', obstacles); parkedCar(scene, -25.5, 106, '#e6d9bc', obstacles);
@@ -74,11 +89,7 @@ export function createWorld(): World {
   for (const x of [-10, 10]) { box(scene, .16, 5.5, .16, x, 2.75, 78, '#687e73'); box(scene, 3, .15, .25, x - Math.sign(x) * 1.3, 5.5, 78, '#687e73'); }
   box(scene, .2, 4.8, .2, -8, 2.4, 91, '#617367'); box(scene, .2, 4.8, .2, 8, 2.4, 91, '#617367');
   board(scene, 'АВТОШКОЛА', 0, 4.7, 91, 16, 1.8, '#244a3e', '#f2eddc');
-  speedSign(scene, 10.5, 57, '30');
-  for (const x of [-10.3, 10.3]) {
-    box(scene, .13, 3.9, .13, x, 1.95, 17, '#63756d'); box(scene, .52, 1.5, .45, x, 3.5, 17, '#2c3d34');
-    for (let i = 0; i < 3; i++) { const l = new THREE.Mesh(new THREE.CircleGeometry(.17, 16), new THREE.MeshBasicMaterial({ color: i === 2 ? '#a8d889' : '#566458', side: THREE.DoubleSide })); l.position.set(x, 3.97 - i * .47, 17.24); scene.add(l); }
-  }
+  for (const zone of cityMap.speedZones) speedSign(scene, zone.signAt.x, zone.signAt.z, String(zone.limit));
   // Batch static primitives by material so windows and trees do not each cost a draw call.
   scene.updateMatrixWorld(true);
   const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
@@ -86,6 +97,15 @@ export function createWorld(): World {
   scene.traverse(object => { if (object instanceof THREE.Mesh && !Array.isArray(object.material)) staticMeshes.push(object); });
   for (const mesh of staticMeshes) { if (Array.isArray(mesh.material)) continue; const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld); const batch = batches.get(mesh.material) ?? []; batch.push(geometry); batches.set(mesh.material, batch); mesh.removeFromParent(); mesh.geometry.dispose(); }
   for (const [mat, geometries] of batches) { const merged = mergeGeometries(geometries, false); if (merged) { const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh); } geometries.forEach(g => g.dispose()); }
+  // Lamps are added after batching: each head owns materials that change with the signal phase.
+  const signals: SignalHead[] = [];
+  const lampGeometry = new THREE.CircleGeometry(.17, 16);
+  for (const slot of lampSlots) {
+    const head: SignalHead = { group: slot.approach.group, red: new THREE.MeshBasicMaterial({ color: '#4a3a36' }), yellow: new THREE.MeshBasicMaterial({ color: '#4a4636' }), green: new THREE.MeshBasicMaterial({ color: '#36463a' }) };
+    const face = new THREE.Group(); face.position.set(slot.x, 0, slot.z); face.rotation.y = slot.rotation; scene.add(face);
+    [head.red, head.yellow, head.green].forEach((m, i) => { const l = new THREE.Mesh(lampGeometry, m); l.position.set(0, 3.97 - i * .47, .235); face.add(l); });
+    signals.push(head);
+  }
   const goal = new THREE.Group(); goal.position.set(4, .17, 69); goal.visible = false; scene.add(goal);
   const mark = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 7), new THREE.MeshBasicMaterial({ color: '#b3df9a', transparent: true, opacity: .32, side: THREE.DoubleSide })); mark.rotation.x = -Math.PI / 2; goal.add(mark);
   for (const x of [-1.9, 1.9]) box(goal, .12, .025, 7, x, .02, 0, '#bdeaa4');
@@ -110,5 +130,20 @@ export function createWorld(): World {
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, .235, 12), material('#a6b4a6')); hub.rotation.z = Math.PI / 2; tire.add(hub);
     tires.push(tire); if (z < 0) frontTires.push(pivot);
   }
-  return { scene, obstacles, car, shell, wheel, tires, frontTires, goal };
+  return { scene, obstacles, car, shell, wheel, tires, frontTires, goal, signals };
+}
+
+const lampColors = { red: ['#ff5a45', '#4a3a36'], yellow: ['#ffd04a', '#4a4636'], green: ['#8dff7a', '#36463a'] } as const;
+/** Lights the 3D lamps from the logical state; flashing green blinks at 1 Hz like a real signal. */
+export function paintSignal(head: SignalHead, lamp: Lamp, time: number) {
+  const on = { red: lamp === 'red' || lamp === 'redYellow', yellow: lamp === 'yellow' || lamp === 'redYellow', green: lamp === 'green' || (lamp === 'greenFlash' && time % 1 < .5) };
+  for (const key of ['red', 'yellow', 'green'] as const) head[key].color.set(lampColors[key][on[key] ? 0 : 1]);
+}
+/** AI car body; its group origin sits on the ground at the car centre, nose towards -z. */
+export function trafficCar(scene: THREE.Scene, color: string) {
+  const g = new THREE.Group(); scene.add(g);
+  box(g, 1.8, .65, 3.9, 0, .7, 0, color); box(g, 1.55, .6, 1.9, 0, 1.3, .2, '#4f6669');
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .55, .64, sx * .86, .35, sz * 1.25, '#263431');
+  for (const x of [-.55, .55]) { box(g, .38, .12, .05, x, .8, -1.96, '#fff2c4'); box(g, .38, .12, .05, x, .8, 1.96, '#c06c55'); }
+  return g;
 }

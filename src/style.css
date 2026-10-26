@@ -50,3 +50,28 @@
 @media(max-height:600px) and (orientation:landscape){.steering-area .steering-caption,.steering-area .control-key{display:none}.steering-area{flex-basis:136px;width:136px}.steering-wheel{width:136px;height:136px}.steering-area .gear-selector button{height:20px}}
 @media(max-height:600px) and (orientation:landscape){.steering-area{flex-basis:124px;width:124px}.steering-wheel{width:124px;height:124px}.steering-area .gear-selector{padding:2px;margin-bottom:3px}.steering-area .gear-selector>span{display:none}}
 @media(max-height:380px) and (orientation:landscape){.mirrors{top:74px}.mirror-frame{max-width:132px}}
+
+/* Round tachometer drawn around the turn signals and speed readout; their size and place are unchanged */
+.cluster{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;gap:inherit}
+.tacho{position:absolute;left:50%;top:50%;height:150%;aspect-ratio:1;transform:translate(-50%,-50%);z-index:-1;pointer-events:none;overflow:visible}
+.tacho-face{fill:#1d332be0;stroke:#cddbc437;stroke-width:1.5}
+.tacho-track{fill:none;stroke:#58705b80;stroke-width:3}
+.tacho-red{fill:none;stroke:#c8553f;stroke-width:5}
+.tacho-tick{stroke:#a9bb9f;stroke-width:1.5;stroke-linecap:round}
+.tacho-tick.major{stroke:#e4edd2;stroke-width:2.5}
+.tacho-tick.red{stroke:#f0a08a}
+.tacho-label{fill:#c6d4b9;font-size:11px;font-weight:600;text-anchor:middle;dominant-baseline:central}
+.tacho-label.red{fill:#f0a08a}
+.tacho-needle{transition:transform .12s linear}
+.tacho-needle path{fill:#f3b46a}
+.tacho-needle circle{fill:#f3b46a}
+.cluster .speedometer{background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none}
+.cluster .rpm-line{visibility:hidden}
+
+/* Belt and handbrake sit in front of the tachometer, slightly larger and opaque */
+.aux-controls{position:relative;z-index:2}
+.aux-controls button{background:#23382e;padding:10px 8px;font-size:10.5px;gap:6px;box-shadow:0 3px 10px #13271c55}
+.aux-controls svg{width:20px;height:20px}
+.aux-controls i{width:5px;height:5px}
+@media(max-width:1150px){.aux-controls button{font-size:9.5px;padding:10px 6px}.aux-controls svg{width:18px;height:18px}}
+@media(max-height:600px) and (orientation:landscape){.aux-controls button{font-size:8.5px;padding:7px 5px}.aux-controls svg{width:15px;height:15px}.aux-controls i{width:4px;height:4px}}

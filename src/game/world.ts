@@ -116,10 +116,10 @@ export function createWorld(): World {
   box(shell, 1.58, .12, 2.05, 0, 1.79, .15, '#d9e7d8');
   for (const x of [-.78, .78]) for (const z of [-.87, 1.1]) { const post = box(shell, .075, .72, .1, x, 1.42, z, '#c3d1c0'); post.rotation.x = z < 0 ? -.22 : .18; }
   for (const x of [-.78, .78]) { box(shell, .1, .42, 1.9, x, 1.02, .1, '#d1dfcf'); box(shell, .1, .65, .12, x, 1.4, .2, '#9eb7a6'); }
-  box(shell, 1.65, .23, .55, 0, 1.03, -.76, '#283c36'); box(shell, .12, .12, .22, -.47, 1.2, -.5, '#283c36');
+  box(shell, 1.65, .23, .55, 0, 1.03, -.76, '#283c36'); box(shell, .12, .12, .24, -.47, 1.02, -.6, '#283c36');
   for (const x of [-.43, .43]) { box(shell, .6, .5, .6, x, .95, .32, '#4f6357'); box(shell, .6, .67, .14, x, 1.25, .65, '#4f6357'); }
   for (const x of [-.56, .56]) { box(shell, .4, .13, .06, x, .79, -2.055, '#fff2c4'); box(shell, .4, .13, .06, x, .78, 2.055, '#c06c55'); }
-  const wheel = new THREE.Group(); wheel.position.set(-.45, 1.24, -.47); shell.add(wheel);
+  const wheel = new THREE.Group(); wheel.position.set(-.45, 1.06, -.5); wheel.rotation.x = -.38; shell.add(wheel);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(.22, .025, 8, 28), material('#1e302a')); wheel.add(ring);
   box(wheel, .4, .025, .025, 0, 0, 0, '#637368'); box(wheel, .025, .2, .025, 0, -.1, 0, '#637368');
   const tires: THREE.Group[] = [], frontTires: THREE.Group[] = [];

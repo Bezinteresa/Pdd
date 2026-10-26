@@ -35,3 +35,18 @@
 .trip-log-empty{font-size:9px;line-height:1.6;color:#9aa28f;margin-top:6px}
 @media(max-width:900px){.signal-ahead{top:258px;right:24px}.violation-chip{right:90px;top:15px}}
 @media(max-height:600px) and (orientation:landscape){.signal-ahead{top:180px;right:19px;width:32px;gap:3px}.signal-ahead>span{width:11px;height:11px}.violation-chip{top:10px;right:80px;font-size:10px;padding:4px 8px}.paused-label .lesson-picker button{padding:5px 9px;font-size:9px}}
+
+/* Gear selector above a larger wheel; graded touch gas */
+.steering-area{display:flex;flex-direction:column;align-items:center;flex-basis:220px}
+.steering-area .gear-selector{margin-bottom:8px}
+.steering-wheel{width:220px;height:220px}
+.gas-scale{position:absolute;top:10px;left:11px;right:11px;height:58%;display:flex;flex-direction:column;gap:3px;pointer-events:none}
+.gas-scale i{flex:1;border-radius:2px;background:#1d342730}
+.gas-scale i.lit{background:#f6fbe2;box-shadow:0 0 6px #f6fbe2aa}
+@media(min-height:850px) and (min-width:1050px){.steering-area{flex-basis:250px;width:250px}.steering-wheel{width:250px;height:250px}}
+@media(max-width:1150px){.steering-area{flex-basis:180px;width:180px}.steering-wheel{width:180px;height:180px}}
+@media(max-width:900px){.steering-area{flex-basis:170px;width:170px}.steering-wheel{width:170px;height:170px}}
+@media(max-height:600px) and (orientation:landscape){.steering-area{flex-basis:142px;width:142px}.steering-wheel{width:142px;height:142px}.steering-area .gear-selector{margin-bottom:4px}.gas-scale{top:8px;left:8px;right:8px;gap:2px}}
+@media(max-height:600px) and (orientation:landscape){.steering-area .steering-caption,.steering-area .control-key{display:none}.steering-area{flex-basis:136px;width:136px}.steering-wheel{width:136px;height:136px}.steering-area .gear-selector button{height:20px}}
+@media(max-height:600px) and (orientation:landscape){.steering-area{flex-basis:124px;width:124px}.steering-wheel{width:124px;height:124px}.steering-area .gear-selector{padding:2px;margin-bottom:3px}.steering-area .gear-selector>span{display:none}}
+@media(max-height:380px) and (orientation:landscape){.mirrors{top:74px}.mirror-frame{max-width:132px}}

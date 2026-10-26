@@ -22,7 +22,11 @@ const steerDegrees = ref(0);
 const wheelPointer = ref<number | null>(null);
 const pedalPointers = new Map<number, 'throttle' | 'brake'>();
 const wheelLastAngle = ref(0);
-const telemetry = reactive<Telemetry>({ speed: 0, rpm: 850, gear: 'P', belt: false, handbrake: true, signal: null, steering: 0, distance: 0, fps: 60, lessonId: lessons[0].id, lessonStep: 0, completed: false, moving: false, speedLimit: null, collisions: 0, violations: [], signalAhead: null, tripTime: 0 });
+const telemetry = reactive<Telemetry>({ speed: 0, rpm: 850, gear: 'P', belt: false, handbrake: true, signal: null, steering: 0, distance: 0, fps: 60, lessonId: lessons[0].id, lessonStep: 0, completed: false, moving: false, speedLimit: null, collisions: 0, violations: [], signalAhead: null, tripTime: 0, throttle: 0, brake: 0 });
+// Touch gas is split into vertical zones: the lower part of the pedal gives little gas, the top gives full gas.
+const GAS_LEVELS = 7;
+const gasLevel = ref(0);
+const shownGasLevel = computed(() => Math.max(gasLevel.value, Math.round(telemetry.throttle * GAS_LEVELS)));
 const defaults: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1 };
 function readSaved<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
 function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Browsers can deny storage; driving remains available. */ } }
@@ -47,7 +51,7 @@ let wheelReturnFrame = 0;
 function notify(text: string) { message.value = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => message.value = '', 4200); }
 function applyCamera(mode: CameraMode) { cameraMode.value = mode; looking.value = 'forward'; engine?.setCamera(mode); }
 function look(value: Look) { looking.value = value; engine?.setLook(value); }
-function play() { if (!engine) return; started.value = true; playing.value = !playing.value; engine.setPaused(!playing.value); clearControls(); }
+function play() { if (!engine) return; (document.activeElement as HTMLElement | null)?.blur?.(); started.value = true; playing.value = !playing.value; engine.setPaused(!playing.value); clearControls(); }
 function pause() { playing.value = false; engine?.setPaused(true); clearControls(); }
 function reset() { pause(); engine?.reset(); steerDegrees.value = 0; previouslyCompleted = false; looking.value = 'forward'; }
 function setGear(value: Gear) { engine?.gear(value); }
@@ -71,11 +75,24 @@ function wheelUp(event?: PointerEvent) {
   const returnToCenter = () => { steerDegrees.value *= .84; if (Math.abs(steerDegrees.value) < .3) steerDegrees.value = 0; if (engine) engine.input.steer = steerDegrees.value / 240; if (steerDegrees.value !== 0) wheelReturnFrame = requestAnimationFrame(returnToCenter); };
   cancelAnimationFrame(wheelReturnFrame); wheelReturnFrame = requestAnimationFrame(returnToCenter);
 }
-function pedalDown(event: PointerEvent, pedal: 'throttle' | 'brake') {
-  if (!playing.value) return; event.preventDefault(); (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); pedalPointers.set(event.pointerId, pedal); pedals[pedal] = true; if (engine) engine.input[pedal] = 1;
+function gasZone(event: PointerEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const fromBottom = 1 - (event.clientY - rect.top) / rect.height;
+  return Math.max(1, Math.min(GAS_LEVELS, Math.ceil(fromBottom * GAS_LEVELS)));
 }
-function pedalUp(event: PointerEvent) { const pedal = pedalPointers.get(event.pointerId); if (!pedal) return; pedalPointers.delete(event.pointerId); if (![...pedalPointers.values()].includes(pedal)) { pedals[pedal] = false; if (engine) engine.input[pedal] = 0; } }
-function clearControls() { cancelAnimationFrame(wheelReturnFrame); wheelPointer.value = null; steerDegrees.value = 0; pedalPointers.clear(); pedals.throttle = pedals.brake = false; engine?.releaseInput(); }
+function setGas(level: number) { gasLevel.value = level; if (engine) engine.input.throttle = level / GAS_LEVELS; }
+function pedalDown(event: PointerEvent, pedal: 'throttle' | 'brake') {
+  if (!playing.value) return; event.preventDefault(); (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); pedalPointers.set(event.pointerId, pedal); pedals[pedal] = true;
+  if (pedal === 'throttle') setGas(gasZone(event)); else if (engine) engine.input.brake = 1;
+}
+// Mouse clicks on simulator buttons must not take focus, or Space/Enter would press them instead of driving.
+function keepKeyboard(event: MouseEvent) { if ((event.target as Element).closest('button')) event.preventDefault(); }
+function pedalMove(event: PointerEvent) { if (pedalPointers.get(event.pointerId) === 'throttle') setGas(gasZone(event)); }
+function pedalUp(event: PointerEvent) {
+  const pedal = pedalPointers.get(event.pointerId); if (!pedal) return; pedalPointers.delete(event.pointerId);
+  if (![...pedalPointers.values()].includes(pedal)) { pedals[pedal] = false; if (pedal === 'throttle') setGas(0); else if (engine) engine.input.brake = 0; }
+}
+function clearControls() { cancelAnimationFrame(wheelReturnFrame); wheelPointer.value = null; steerDegrees.value = 0; pedalPointers.clear(); pedals.throttle = pedals.brake = false; gasLevel.value = 0; engine?.releaseInput(); }
 function fullscreen() { if (document.fullscreenElement) document.exitFullscreen().catch(() => notify('Не удалось выйти из полного экрана')); else document.documentElement.requestFullscreen?.().catch(() => notify('Полный экран недоступен в этом браузере')); }
 function answer(index: number) { if (selectedAnswer.value !== null) return; selectedAnswer.value = index; if (index === question.value.correct && !progress.theoryCorrect.includes(questionIndex.value)) progress.theoryCorrect.push(questionIndex.value); }
 function nextQuestion() { questionIndex.value = (questionIndex.value + 1) % questions.length; selectedAnswer.value = null; }
@@ -117,7 +134,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); cancelAnimationFrame(wheelRetu
     </header>
 
     <main v-show="tab === 'practice'" class="practice-layout">
-      <section class="simulator" aria-label="Симулятор вождения">
+      <section class="simulator" aria-label="Симулятор вождения" @mousedown="keepKeyboard">
         <div ref="canvasHost" class="canvas-host"></div>
         <div class="scene-heading"><span class="eyebrow">ПРАКТИЧЕСКОЕ ЗАНЯТИЕ</span><h1>{{ lesson.heading }}</h1><div class="location"><Icon name="pin" :size="14" /> Учебный квартал <span>•</span> Сухая дорога <Icon name="sun" :size="14" /></div></div>
         <div class="scene-tools"><button class="glass-button" aria-label="Помощь по управлению" @click="showHelp = true"><Icon name="help" /></button><button class="glass-button" aria-label="Полный экран" @click="fullscreen"><Icon name="full" /></button></div>
@@ -137,7 +154,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); cancelAnimationFrame(wheelRetu
         <div v-if="fatal" class="fatal-state"><Icon name="hazard" :size="32" /><p>{{ fatal }}</p></div>
 
         <div class="control-deck">
-          <div class="steering-area"><div class="steering-caption">{{ wheelPointer !== null ? 'РУЛЕНИЕ' : 'ВРАЩАЙТЕ РУЛЬ' }}</div><button class="steering-wheel" aria-label="Руль: вращайте пальцем или используйте A и D" @pointerdown="wheelDown" @pointermove="wheelMove" @pointerup="wheelUp" @pointercancel="wheelUp" @lostpointercapture="wheelUp"><svg viewBox="0 0 180 180" :style="{ transform: `rotate(${wheelPointer !== null || Math.abs(steerDegrees) > 1 ? steerDegrees : telemetry.steering * 240}deg)` }"><circle class="wheel-outer" cx="90" cy="90" r="75"/><circle class="wheel-inner" cx="90" cy="90" r="58"/><path class="wheel-spoke" d="M74 80 20 64l-4 24 58 10m32-18 54-16 4 24-58 10m-23 8-6 55h26l-6-55"/><circle class="wheel-hub" cx="90" cy="90" r="24"/><text x="90" y="97" text-anchor="middle">У</text><path class="wheel-stripe" d="M86 10h8v15h-8z"/></svg></button><span class="control-key">A / D <span>или пальцем</span></span></div>
+          <div class="steering-area"><div class="gear-selector" aria-label="Селектор автоматической коробки"><span>АКПП</span><button v-for="gear in (['P', 'R', 'N', 'D'] as Gear[])" :key="gear" :class="{ selected: telemetry.gear === gear }" :aria-label="`Выбрать ${gear}`" :aria-pressed="telemetry.gear === gear" @click="setGear(gear)">{{ gear }}</button></div><div class="steering-caption">{{ wheelPointer !== null ? 'РУЛЕНИЕ' : 'ВРАЩАЙТЕ РУЛЬ' }}</div><button class="steering-wheel" aria-label="Руль: вращайте пальцем или используйте A и D" @pointerdown="wheelDown" @pointermove="wheelMove" @pointerup="wheelUp" @pointercancel="wheelUp" @lostpointercapture="wheelUp"><svg viewBox="0 0 180 180" :style="{ transform: `rotate(${wheelPointer !== null || Math.abs(steerDegrees) > 1 ? steerDegrees : telemetry.steering * 240}deg)` }"><circle class="wheel-outer" cx="90" cy="90" r="75"/><circle class="wheel-inner" cx="90" cy="90" r="58"/><path class="wheel-spoke" d="M74 80 20 64l-4 24 58 10m32-18 54-16 4 24-58 10m-23 8-6 55h26l-6-55"/><circle class="wheel-hub" cx="90" cy="90" r="24"/><text x="90" y="97" text-anchor="middle">У</text><path class="wheel-stripe" d="M86 10h8v15h-8z"/></svg></button><span class="control-key">A / D <span>или пальцем</span></span></div>
 
           <div class="center-controls">
             <div class="signal-controls"><button :class="{ lit: telemetry.signal === 'left' || telemetry.signal === 'hazard' }" aria-label="Левый поворотник" @click="engine?.toggleSignal('left')"><Icon name="left" /></button><button :class="{ 'hazard-lit': telemetry.signal === 'hazard' }" aria-label="Аварийная сигнализация" @click="engine?.toggleSignal('hazard')"><Icon name="hazard" :size="18" /></button><button :class="{ lit: telemetry.signal === 'right' || telemetry.signal === 'hazard' }" aria-label="Правый поворотник" @click="engine?.toggleSignal('right')"><Icon name="arrow" /></button></div>
@@ -145,7 +162,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); cancelAnimationFrame(wheelRetu
             <div class="aux-controls"><button :class="{ engaged: telemetry.belt }" aria-label="Пристегнуть или отстегнуть ремень" @click="engine?.toggleBelt()"><Icon name="belt" :size="18"/><span>Ремень</span><i></i></button><button :class="{ 'handbrake-on': telemetry.handbrake }" aria-label="Включить или снять ручник" @click="engine?.toggleHandbrake()"><Icon name="brake" :size="18"/><span>Ручник</span><i></i></button></div>
           </div>
 
-          <div class="pedals-area"><div class="gear-selector" aria-label="Селектор автоматической коробки"><span>АКПП</span><button v-for="gear in (['P', 'R', 'N', 'D'] as Gear[])" :key="gear" :class="{ selected: telemetry.gear === gear }" :aria-label="`Выбрать ${gear}`" :aria-pressed="telemetry.gear === gear" @click="setGear(gear)">{{ gear }}</button></div><div class="pedals"><button class="pedal brake-pedal" :class="{ pressed: pedals.brake }" aria-label="Тормоз: удерживайте" @pointerdown="pedalDown($event, 'brake')" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="pedal-ribs"></span><strong>ТОРМОЗ</strong><small>S / ↓</small></button><button class="pedal gas-pedal" :class="{ pressed: pedals.throttle }" aria-label="Газ: удерживайте" @pointerdown="pedalDown($event, 'throttle')" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="pedal-ribs"></span><strong>ГАЗ</strong><small>W / ↑</small></button></div></div>
+          <div class="pedals-area"><div class="pedals"><button class="pedal brake-pedal" :class="{ pressed: pedals.brake || telemetry.brake > 0 }" aria-label="Тормоз: удерживайте" @pointerdown="pedalDown($event, 'brake')" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="pedal-ribs"></span><strong>ТОРМОЗ</strong><small>S / ↓</small></button><button class="pedal gas-pedal" :class="{ pressed: shownGasLevel > 0 }" aria-label="Газ: чем выше палец на педали, тем сильнее нажатие" @pointerdown="pedalDown($event, 'throttle')" @pointermove="pedalMove" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="gas-scale" aria-hidden="true"><i v-for="level in GAS_LEVELS" :key="level" :class="{ lit: GAS_LEVELS - level < shownGasLevel }"></i></span><strong>ГАЗ</strong><small>W / ↑</small></button></div></div>
         </div>
 
         <div v-if="!playing && !fatal" class="paused-label"><span>{{ started ? 'ПОЕЗДКА НА ПАУЗЕ' : 'ВСЁ НАЧИНАЕТСЯ С ПЕРВОГО МЕТРА' }}</span><div class="lesson-picker" aria-label="Выбор занятия"><button v-for="(item, index) in lessons" :key="item.id" :class="{ selected: lessonIndex === index }" @click="selectLesson(index)">{{ (index + 1).toString().padStart(2, '0') }} · {{ item.title }}</button></div><button @click="play"><Icon name="play" :size="17" />{{ started ? 'Продолжить' : 'За руль' }}</button></div>

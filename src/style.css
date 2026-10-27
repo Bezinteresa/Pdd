@@ -201,3 +201,32 @@
 .practice-item.passed .practice-status{background:#e3f0cf;color:#3f7f3a}
 .practice-item.failed .practice-status{background:#f8e3dc;color:#a5402f}
 @media(max-height:600px) and (orientation:landscape){.practice-item{padding:8px 10px;gap:9px}.practice-text small{display:none}.practice-index{flex-basis:26px;height:26px}}
+
+/* Road HUD on the right: traffic light ahead, the controller, the active limit and the signs just passed */
+.road-hud{position:absolute;right:22px;top:238px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;z-index:3;pointer-events:none;max-width:250px}
+.road-hud .signal-ahead{position:static;top:auto;right:auto}
+.hud-sign{display:flex;flex-direction:row-reverse;align-items:center;gap:8px;animation:hud-in .35s ease-out}
+.hud-sign .sign-icon{width:56px;height:56px}
+.hud-sign small,.regulator-text{background:#f8f4dff0;color:#233d34;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;line-height:1.3;box-shadow:0 3px 10px #0002;max-width:170px}
+.hud-sign.active .sign-icon{filter:drop-shadow(0 0 6px #ffffffcc) drop-shadow(0 2px 4px #0003)}
+.regulator-card{display:flex;flex-direction:row-reverse;align-items:center;gap:8px}
+.regulator-icon{width:56px;height:60px;background:#f8f4dff0;border-radius:10px;padding:4px;box-shadow:0 3px 10px #0002;border:3px solid transparent}
+.regulator-card.go .regulator-icon{border-color:#6cbf5a}
+.regulator-card.stop .regulator-icon{border-color:#d4553f}
+.regulator-text strong{display:block;font-size:13px}
+.regulator-text small{display:block;font-size:10.5px;font-weight:500;color:#5f7552;margin-top:2px}
+.regulator-card.stop .regulator-text strong{color:#a5402f}
+.regulator-card.go .regulator-text strong{color:#3f7f3a}
+@keyframes hud-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+@media(max-width:1150px){.road-hud{top:212px;right:16px}.hud-sign .sign-icon{width:48px;height:48px}}
+@media(max-width:900px){.road-hud{top:196px}}
+@media(max-height:600px) and (orientation:landscape){
+.road-hud{top:136px;right:14px;flex-direction:row-reverse;align-items:flex-start;gap:6px;max-width:46%}
+.hud-sign{flex-direction:column;gap:3px}
+.hud-sign .sign-icon{width:34px;height:34px}
+.hud-sign small{display:none}
+.road-hud .signal-ahead{width:30px;padding:4px 0}
+.regulator-card{flex-direction:column;align-items:flex-end;gap:3px}
+.regulator-icon{width:34px;height:38px;padding:2px;border-width:2px;border-radius:7px}
+.regulator-text{font-size:10px;padding:3px 6px;max-width:130px}
+.regulator-text strong{font-size:10px}.regulator-text small{display:none}}

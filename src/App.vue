@@ -9,6 +9,9 @@ import { compatible, practiceOrder, practiceScenes, randomSelection, readySituat
 import { ruleTexts, PDD_EDITION } from './game/pddText';
 import type { Violation } from './game/rules';
 import SituationSchema from './SituationSchema.vue';
+import RoadSignIcon from './RoadSignIcon.vue';
+import { signCatalog } from './game/signs';
+import { poseLabel, sideLabel } from './game/regulator';
 import { canResume, escapeAction, type ModalState } from './game/session';
 import { questions } from './theory';
 
@@ -27,7 +30,7 @@ const steerDegrees = ref(0);
 const wheelPointer = ref<number | null>(null);
 const pedalPointers = new Map<number, 'throttle' | 'brake'>();
 const wheelLastAngle = ref(0);
-const telemetry = reactive<Telemetry>({ speed: 0, rpm: 850, gear: 'P', belt: false, handbrake: true, signal: null, steering: 0, distance: 0, fps: 60, lessonId: lessons[0].id, lessonStep: 0, completed: false, moving: false, speedLimit: null, collisions: 0, violations: [], signalAhead: null, tripTime: 0, throttle: 0, brake: 0, exam: null });
+const telemetry = reactive<Telemetry>({ speed: 0, rpm: 850, gear: 'P', belt: false, handbrake: true, signal: null, steering: 0, distance: 0, fps: 60, lessonId: lessons[0].id, lessonStep: 0, completed: false, moving: false, speedLimit: null, collisions: 0, violations: [], signalAhead: null, tripTime: 0, throttle: 0, brake: 0, exam: null, signs: [], regulatorAhead: null });
 // Touch gas is split into vertical zones: the lower part of the pedal gives little gas, the top gives full gas.
 const GAS_LEVELS = 7;
 const gasLevel = ref(0);
@@ -39,7 +42,7 @@ const dialTicks = Array.from({ length: 17 }, (_, i) => { const value = i * 500, 
 const redArc = (() => { const a = dialPoint(6000, 103), b = dialPoint(RPM_MAX, 103); return `M${a.x} ${a.y}A103 103 0 0 1 ${b.x} ${b.y}`; })();
 const dialArc = (() => { const a = dialPoint(0, 103), b = dialPoint(RPM_MAX, 103); return `M${a.x} ${a.y}A103 103 0 1 1 ${b.x} ${b.y}`; })();
 const shownGasLevel = computed(() => Math.max(gasLevel.value, Math.round(telemetry.throttle * GAS_LEVELS)));
-const defaults: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true };
+const defaults: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false };
 function readSaved<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
 function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Browsers can deny storage; driving remains available. */ } }
 const storedSettings = readSaved<Partial<GameSettings>>('pdd-settings-v1', {});
@@ -48,6 +51,12 @@ const settings = reactive<GameSettings>({ ...defaults, ...storedSettings, qualit
 const showExamPicker = ref(false), showDebrief = ref(false), showPracticeList = ref(false);
 const examSelection = ref<string[]>(readSaved<string[]>('pdd-exam-selection-v1', []).filter(id => readySituations.some(s => s.id === id)));
 const examView = computed(() => telemetry.exam !== null);
+// Explanations next to signs and the controller help while learning; in the exam they are off unless enabled.
+const showHudHints = computed(() => !examView.value || !!practiceId.value || settings.examHints);
+// The speed plate already shown as the active restriction is not repeated among the signs just passed.
+const hudSigns = computed(() => telemetry.signs.filter(s => !(s.code === '3.24' && s.value === telemetry.speedLimit)));
+const maneuverWords = { straight: 'прямо', right: 'направо', left: 'налево', uturn: 'разворот' } as const;
+const regulatorText = computed(() => telemetry.regulatorAhead ? `${poseLabel[telemetry.regulatorAhead.pose]}, вы ${sideLabel[telemetry.regulatorAhead.side]}` : '');
 const practiceId = computed(() => telemetry.exam?.practice ?? null);
 const practiceSituation = computed(() => situations.find(s => s.id === practiceId.value) ?? null);
 // The practice list: the two lessons first, then situations ordered from the simplest to the hardest.
@@ -262,8 +271,22 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
           <button class="mirror-frame mirror-right" :class="{ focused: looking === 'right' }" aria-label="Посмотреть в правое зеркало" @click="look(looking === 'right' ? 'forward' : 'right')"><span ref="mirrorRight" class="mirror-view"></span><span class="mirror-label">ПРАВОЕ</span></button>
         </div>
 
-        <div v-if="telemetry.speedLimit" class="road-sign" title="Действующее ограничение скорости">{{ telemetry.speedLimit }}</div>
-        <div v-if="telemetry.signalAhead" class="signal-ahead" :class="lampClass" :title="`Светофор впереди: ${lampLabel[telemetry.signalAhead.lamp]}`"><span class="lamp-r"></span><span class="lamp-y"></span><span class="lamp-g"></span><small>{{ Math.max(0, Math.round(telemetry.signalAhead.distance)) }} м</small></div>
+        <div class="road-hud" aria-label="Дорожная обстановка">
+          <div v-if="telemetry.signalAhead" class="hud-card signal-ahead" :class="lampClass" :title="`Светофор впереди: ${lampLabel[telemetry.signalAhead.lamp]}`"><span class="lamp-r"></span><span class="lamp-y"></span><span class="lamp-g"></span><small>{{ Math.max(0, Math.round(telemetry.signalAhead.distance)) }} м</small></div>
+          <div v-if="telemetry.regulatorAhead" class="hud-card regulator-card" :class="telemetry.regulatorAhead.allowed.length ? 'go' : 'stop'" :title="regulatorText">
+            <svg class="regulator-icon" viewBox="0 0 60 64" aria-hidden="true">
+              <circle cx="30" cy="12" r="7" fill="#e2b892" /><rect x="22" y="9" width="16" height="4" rx="2" fill="#f4f4ef" />
+              <rect x="21" y="20" width="18" height="22" rx="4" fill="#2f3f5c" /><rect x="21" y="24" width="18" height="6" fill="#c9f24d" />
+              <path d="M25 42V60M35 42V60" stroke="#2c3646" stroke-width="5" stroke-linecap="round" />
+              <path v-if="telemetry.regulatorAhead.pose === 'sides'" d="M21 23H4M39 23H56" stroke="#2f3f5c" stroke-width="5" stroke-linecap="round" />
+              <path v-else-if="telemetry.regulatorAhead.pose === 'up'" d="M21 23 18 40M39 22 41 2" stroke="#2f3f5c" stroke-width="5" stroke-linecap="round" />
+              <path v-else d="M21 23 18 40M39 23 50 32" stroke="#2f3f5c" stroke-width="5" stroke-linecap="round" />
+            </svg>
+            <div v-if="showHudHints" class="regulator-text"><strong>{{ telemetry.regulatorAhead.allowed.length ? `Можно: ${telemetry.regulatorAhead.allowed.map(m => maneuverWords[m]).join(', ')}` : 'Стоп' }}</strong><small>{{ regulatorText }}</small></div>
+          </div>
+          <div v-if="telemetry.speedLimit" class="hud-sign active" title="Действующее ограничение скорости"><RoadSignIcon code="3.24" :value="telemetry.speedLimit" /><small v-if="showHudHints">до перекрёстка</small></div>
+          <div v-for="sign in hudSigns" :key="sign.id" class="hud-sign" :title="signCatalog[sign.code].name"><RoadSignIcon :code="sign.code" :value="sign.value" /><small v-if="showHudHints">{{ signCatalog[sign.code].name }}</small></div>
+        </div>
         <div v-if="telemetry.violations.length" class="violation-chip" :title="telemetry.violations[telemetry.violations.length - 1].title"><Icon name="hazard" :size="14" />{{ telemetry.violations.length }}</div>
         <div v-if="looking !== 'forward'" class="return-look"><button class="glass-button" @click="look('forward')"><Icon name="camera" :size="16" /> Взгляд вперёд</button></div>
         <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">{{ practiceId ? `ПРАКТИКА · ${practiceSituation?.topic ?? ''}` : `ИНСПЕКТОР · ${Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length)}/${telemetry.exam.steps.length}` }}</span>{{ telemetry.exam.command }}<small v-if="practiceId && telemetry.speed < 6" class="inspector-hint">{{ practiceScenes[practiceId]?.hint }}</small></div>
@@ -309,7 +332,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
 
     <main v-if="tab === 'progress'" class="content-page progress-page"><div class="page-intro"><span class="eyebrow">МАЛЕНЬКИЕ ШАГИ — БОЛЬШОЙ ПУТЬ</span><h1>Ваш прогресс</h1><p>Результаты сохраняются в этом браузере на вашем устройстве.</p></div><div class="stat-grid"><div><Icon name="flag" :size="26"/><strong>{{ progress.lessons }}</strong><span>Успешных занятий</span></div><div><Icon name="drive" :size="26"/><strong>{{ progress.bestDistance }} <small>м</small></strong><span>Самая длинная поездка</span></div><div><Icon name="book" :size="26"/><strong>{{ progress.theoryCorrect.length }} <small>/ {{ questions.length }}</small></strong><span>Вопросов разобрано верно</span></div><div><Icon name="flag" :size="26"/><strong>{{ progress.examsPassed }} <small>/ {{ progress.examsTaken }}</small></strong><span>Экзаменов сдано</span></div><div><Icon name="check" :size="26"/><strong>{{ practiceOrder.filter(id => progress.practiceResults[id] === 0).length }} <small>/ {{ practiceOrder.length }}</small></strong><span>Ситуаций без ошибок</span></div></div><section v-for="(item, index) in lessons" :key="item.id" class="progress-lesson"><span class="progress-lesson-icon"><Icon :name="progress.lessonResults[item.id] === 0 ? 'check' : 'drive'" :size="38" /></span><div><span class="eyebrow">ПРАКТИКА · ЗАНЯТИЕ {{ (index + 1).toString().padStart(2, '0') }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }} {{ progress.lessonResults[item.id] === undefined ? 'Ещё не пройдено.' : progress.lessonResults[item.id] === 0 ? 'Пройдено без нарушений.' : `Лучший результат: нарушений — ${progress.lessonResults[item.id]}.` }}</p></div><button class="primary-button" @click="selectLesson(index); tab = 'practice'">За руль<Icon name="arrow" :size="16" /></button></section></main>
 
-    <div v-if="showHelp || showSettings" class="modal-backdrop" @click.self="showHelp = showSettings = false"><section class="modal" role="dialog" aria-modal="true" :aria-label="showHelp ? 'Управление' : 'Настройки'"><button class="modal-close icon-button" aria-label="Закрыть" @click="showHelp = showSettings = false"><Icon name="close"/></button><span class="eyebrow">ГОРОДСКАЯ АВТОШКОЛА</span><h2>{{ showHelp ? 'Всё под рукой' : 'Настроим под вас' }}</h2><template v-if="showHelp"><p>На телефоне вращайте руль пальцем. Газ и тормоз можно удерживать одновременно с рулением.</p><dl class="key-list"><div><dt>W / ↑</dt><dd>Газ</dd></div><div><dt>S / ↓</dt><dd>Тормоз</dd></div><div><dt>A / D</dt><dd>Руль влево / вправо</dd></div><div><dt>1 · 2 · 3 · 4</dt><dd>P · R · N · D</dd></div><div><dt>Q / E</dt><dd>Поворотники</dd></div><div><dt>Пробел / B / C</dt><dd>Ручник / ремень / камера</dd></div><div><dt>Esc</dt><dd>Пауза / продолжение</dd></div></dl><div class="info-banner">Для выхода из P удерживайте тормоз. Затем снимите ручник и плавно нажмите газ.</div></template><template v-else><label class="setting-row">Качество графики<select v-model="settings.quality"><option value="low">Экономичное</option><option value="balanced">Сбалансированное</option><option value="high">Высокое</option></select></label><label class="setting-row">Голос инспектора<input v-model="settings.voice" type="checkbox" /></label><label class="setting-row">Рабочие зеркала<input v-model="settings.mirrors" type="checkbox" /></label><label class="setting-row">Покачивание кузова<input v-model="settings.motion" type="checkbox" /></label><label class="setting-row">Чувствительность руля<input v-model.number="settings.sensitivity" type="range" min="0.5" max="1.5" step="0.1" /></label><p class="settings-note">Если игра замедляется, выберите экономичное качество. Зеркала показывают настоящую обстановку с отдельных камер.</p></template><button class="primary-button" @click="showHelp = showSettings = false">Понятно<Icon name="check" :size="16" /></button></section></div>
+    <div v-if="showHelp || showSettings" class="modal-backdrop" @click.self="showHelp = showSettings = false"><section class="modal" role="dialog" aria-modal="true" :aria-label="showHelp ? 'Управление' : 'Настройки'"><button class="modal-close icon-button" aria-label="Закрыть" @click="showHelp = showSettings = false"><Icon name="close"/></button><span class="eyebrow">ГОРОДСКАЯ АВТОШКОЛА</span><h2>{{ showHelp ? 'Всё под рукой' : 'Настроим под вас' }}</h2><template v-if="showHelp"><p>На телефоне вращайте руль пальцем. Газ и тормоз можно удерживать одновременно с рулением.</p><dl class="key-list"><div><dt>W / ↑</dt><dd>Газ</dd></div><div><dt>S / ↓</dt><dd>Тормоз</dd></div><div><dt>A / D</dt><dd>Руль влево / вправо</dd></div><div><dt>1 · 2 · 3 · 4</dt><dd>P · R · N · D</dd></div><div><dt>Q / E</dt><dd>Поворотники</dd></div><div><dt>Пробел / B / C</dt><dd>Ручник / ремень / камера</dd></div><div><dt>Esc</dt><dd>Пауза / продолжение</dd></div></dl><div class="info-banner">Для выхода из P удерживайте тормоз. Затем снимите ручник и плавно нажмите газ.</div></template><template v-else><label class="setting-row">Качество графики<select v-model="settings.quality"><option value="low">Экономичное</option><option value="balanced">Сбалансированное</option><option value="high">Высокое</option></select></label><label class="setting-row">Голос инспектора<input v-model="settings.voice" type="checkbox" /></label><label class="setting-row">Подсказки к знакам на экзамене<input v-model="settings.examHints" type="checkbox" /></label><label class="setting-row">Рабочие зеркала<input v-model="settings.mirrors" type="checkbox" /></label><label class="setting-row">Покачивание кузова<input v-model="settings.motion" type="checkbox" /></label><label class="setting-row">Чувствительность руля<input v-model.number="settings.sensitivity" type="range" min="0.5" max="1.5" step="0.1" /></label><p class="settings-note">Если игра замедляется, выберите экономичное качество. Зеркала показывают настоящую обстановку с отдельных камер.</p></template><button class="primary-button" @click="showHelp = showSettings = false">Понятно<Icon name="check" :size="16" /></button></section></div>
     <div v-if="showExamPicker" class="modal-backdrop" @click.self="showExamPicker = false"><section class="modal exam-modal" role="dialog" aria-modal="true" aria-label="Экзамен с инспектором">
       <button class="modal-close icon-button" aria-label="Закрыть" @click="showExamPicker = false"><Icon name="close"/></button>
       <span class="eyebrow">ПРАКТИЧЕСКИЙ ЭКЗАМЕН</span><h2>Экзамен с инспектором</h2>

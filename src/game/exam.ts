@@ -3,6 +3,7 @@ import type { VehicleState } from './vehicle.ts';
 import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
 import { laneFromApproach, type ForcedBrake, type TrafficLane, type TrafficSystem } from './traffic.ts';
 import type { Pose, TripJudge, Violation } from './rules.ts';
+import type { PlacedSign } from './signs.ts';
 
 // Practical exam with an inspector: a fixed loop through the district with slots where situations are staged.
 // Route: start → A (signal, straight) → B (unregulated, left) → west corner (left) → D (T-junction onto the main
@@ -92,6 +93,15 @@ export interface RouteStep { kind: 'start' | 'node' | 'uturn' | 'finish' | 'end'
 export const uTurnZone: Rect = { x: 0, z: 52, halfX: 9, halfZ: 20 };
 export const stopLineD: [Point, Point] = [{ x: -77.5, z: -10.5 }, { x: -70.5, z: -10.5 }];
 export function finishZone(selected: string[]): Point { return selected.includes('u-turn') ? { x: 4.5, z: 34 } : { x: -4.5, z: 45 }; }
+
+/** Signs a set of situations puts on the map; the 3D scene and the HUD both read this list. */
+export function examSigns(selected: string[]): PlacedSign[] {
+  const signs: PlacedSign[] = [];
+  if (selected.includes('d-yield') || selected.includes('d-stop')) signs.push({ id: 'd-priority', code: selected.includes('d-stop') ? '2.5' : '2.4', at: { x: -79.6, z: -13 }, facing: { x: 0, z: -1 } });
+  if (selected.includes('b-tram')) signs.push({ id: 'b-tram-warning', code: '1.5', at: { x: 10.6, z: -48 }, facing: { x: 0, z: 1 } });
+  if (selected.includes('a2-pedestrian')) signs.push({ id: 'a2-crossing', code: '5.19.1', at: { x: -10.6, z: 13.4 }, facing: { x: 0, z: -1 } });
+  return signs;
+}
 
 export function buildRoute(selected: string[]): RouteStep[] {
   const regulator = selected.includes('a-regulator');

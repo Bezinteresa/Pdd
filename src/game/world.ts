@@ -201,6 +201,15 @@ function signTexture(code: string) {
     ctx.beginPath(); for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx.lineTo(128 + Math.cos(a) * 124, 128 + Math.sin(a) * 124); } ctx.closePath();
     ctx.fillStyle = '#c8302a'; ctx.fill(); ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = '700 74px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('STOP', 128, 132);
+  } else if (code === '1.5') {
+    // Warning triangle with a tram silhouette.
+    ctx.beginPath(); ctx.moveTo(128, 12); ctx.lineTo(248, 232); ctx.lineTo(8, 232); ctx.closePath(); ctx.fillStyle = '#c8302a'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(128, 52); ctx.lineTo(214, 210); ctx.lineTo(42, 210); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.fillStyle = '#1d2120'; ctx.fillRect(86, 120, 84, 62); ctx.fillStyle = '#fff'; ctx.fillRect(94, 130, 30, 20); ctx.fillRect(132, 130, 30, 20); ctx.fillStyle = '#1d2120'; ctx.fillRect(126, 104, 4, 16); ctx.fillRect(108, 102, 40, 4);
+  } else if (code === '5.19.1') {
+    ctx.fillStyle = '#1f5fbf'; ctx.fillRect(4, 4, 248, 248); ctx.beginPath(); ctx.moveTo(128, 30); ctx.lineTo(230, 222); ctx.lineTo(26, 222); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.fillStyle = '#1d2120'; ctx.beginPath(); ctx.arc(138, 100, 14, 0, Math.PI * 2); ctx.fill(); ctx.lineWidth = 12; ctx.strokeStyle = '#1d2120'; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(134, 120); ctx.lineTo(122, 160); ctx.lineTo(102, 196); ctx.moveTo(122, 160); ctx.lineTo(146, 196); ctx.moveTo(130, 132); ctx.lineTo(104, 150); ctx.moveTo(130, 132); ctx.lineTo(156, 148); ctx.stroke();
   } else {
     ctx.beginPath(); ctx.moveTo(8, 20); ctx.lineTo(248, 20); ctx.lineTo(128, 236); ctx.closePath(); ctx.fillStyle = '#c8302a'; ctx.fill();
     ctx.beginPath(); ctx.moveTo(48, 44); ctx.lineTo(208, 44); ctx.lineTo(128, 188); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();

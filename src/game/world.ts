@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Obstacle } from './vehicle';
-import { cityMap, type Approach, type RoadMap } from './roads';
+import { cityMap, onRoad, type Approach, type RoadMap } from './roads';
 import type { Lamp, SignalGroup } from './signals';
 import type { Pose } from './regulator';
 import type { Point } from './roads';
@@ -153,10 +153,10 @@ export function finishWorld(scene: THREE.Scene, obstacles: Obstacle[], slots: La
   box(shell, 1.58, .12, 2.05, 0, 1.79, .15, '#d9e7d8');
   for (const x of [-.78, .78]) for (const z of [-.87, 1.1]) { const post = box(shell, .075, .72, .1, x, 1.42, z, '#c3d1c0'); post.rotation.x = z < 0 ? -.22 : .18; }
   for (const x of [-.78, .78]) { box(shell, .1, .42, 1.9, x, 1.02, .1, '#d1dfcf'); box(shell, .1, .65, .12, x, 1.4, .2, '#9eb7a6'); }
-  box(shell, 1.65, .23, .55, 0, 1.03, -.76, '#283c36'); box(shell, .12, .12, .24, -.47, 1.02, -.6, '#283c36');
+  box(shell, 1.65, .23, .55, 0, 1.03, -.76, '#283c36'); box(shell, .1, .1, .3, -.45, 1.04, -.48, '#283c36');
   for (const x of [-.43, .43]) { box(shell, .6, .5, .6, x, .95, .32, '#4f6357'); box(shell, .6, .67, .14, x, 1.25, .65, '#4f6357'); }
   for (const x of [-.56, .56]) { box(shell, .4, .13, .06, x, .79, -2.055, '#fff2c4'); box(shell, .4, .13, .06, x, .78, 2.055, '#c06c55'); }
-  const wheel = new THREE.Group(); wheel.position.set(-.45, 1.06, -.5); wheel.rotation.x = -.38; shell.add(wheel);
+  const wheel = new THREE.Group(); wheel.position.set(-.45, 1.07, -.31); wheel.rotation.x = -.38; shell.add(wheel);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(.22, .025, 8, 28), material('#1e302a')); wheel.add(ring);
   box(wheel, .4, .025, .025, 0, 0, 0, '#637368'); box(wheel, .025, .2, .025, 0, -.1, 0, '#637368');
   const tires: THREE.Group[] = [], frontTires: THREE.Group[] = [];
@@ -190,11 +190,12 @@ export function createWorld(): World {
   parkedCar(scene, -45.5, 106, '#c4b77c', obstacles); parkedCar(scene, -35.5, 106, '#71939b', obstacles); parkedCar(scene, -25.5, 106, '#e6d9bc', obstacles);
   for (let z = 90; z <= 125; z += 7) { cone(scene, 20, z); cone(scene, 36, z); }
   for (let z = 87; z <= 125; z += 9.5) cone(scene, 28 + Math.sin(z) * 3.5, z);
-  for (const x of [-58, 58]) for (let z = 85; z <= 128; z += 12) { tree(scene, x, z, 1.1); obstacles.push({ x, z, halfX: .4, halfZ: .4 }); }
+  for (const x of [-68, 68]) for (let z = 85; z <= 128; z += 12) { tree(scene, x, z, 1.1); obstacles.push({ x, z, halfX: .4, halfZ: .4 }); }
   const blocks = [ [-39, -40, 42, 52], [39, -40, 42, 52], [-105, -40, 32, 50], [105, -40, 32, 50], [-39, 40, 42, 45], [39, 40, 42, 45] ];
   let count = 0;
   for (const [x, z, w, d] of blocks) count = houses(scene, { x, z, w, d }, obstacles, count);
-  for (let z = -120; z <= 60; z += 19) for (const x of [-13, 13]) tree(scene, x, z, .8);
+  // Street trees along the avenue, skipping the cross streets.
+  for (let z = -120; z <= 60; z += 19) for (const x of [-13, 13]) if (!onRoad(cityMap, { x, z }, 1.5)) tree(scene, x, z, .8);
   for (const x of [-10, 10]) { box(scene, .16, 5.5, .16, x, 2.75, 78, '#687e73'); box(scene, 3, .15, .25, x - Math.sign(x) * 1.3, 5.5, 78, '#687e73'); }
   box(scene, .2, 4.8, .2, -8, 2.4, 91, '#617367'); box(scene, .2, 4.8, .2, 8, 2.4, 91, '#617367');
   board(scene, 'АВТОШКОЛА', 0, 4.7, 91, 16, 1.8, '#244a3e', '#f2eddc');

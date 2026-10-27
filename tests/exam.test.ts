@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyManeuver, compatible, ExamRunner, nodes, practiceOrder, practiceScenes, randomSelection, readySituations, situationOutcome, uTurnZone } from '../src/game/exam.ts';
+import { classifyManeuver, compatible, ExamRunner, nodes, pedestrianConflict, practiceOrder, practiceScenes, randomSelection, readySituations, situationOutcome, uTurnZone } from '../src/game/exam.ts';
 import { allowedManeuvers, sideOf } from '../src/game/regulator.ts';
 import { TripJudge } from '../src/game/rules.ts';
 import { cityMap, forwardOf, maneuverThrough, onRoad } from '../src/game/roads.ts';
@@ -222,4 +222,13 @@ test('practice: the staged participant appears only once the learner drives off'
   assert.equal(ctx.traffic.cars.length, 0);
   v.speed = 5; drive(ctx, v, .1, 2);
   assert.equal(ctx.traffic.cars.filter(c => c.kind === 'tram').length, 1);
+});
+
+test('pedestrian conflict: only a pedestrian ahead of the car or walking towards it counts', () => {
+  const car = { x: 0, z: 15, speed: 2 };
+  assert.equal(pedestrianConflict({ x: 2.5, z: 15, dir: -1, speed: 1, waiting: false }, car), true, 'approaching');
+  assert.equal(pedestrianConflict({ x: .5, z: 15, dir: 1, speed: 1, waiting: false }, car), true, 'in front');
+  assert.equal(pedestrianConflict({ x: 2.5, z: 15, dir: 1, speed: 1, waiting: false }, car), false, 'already passed');
+  assert.equal(pedestrianConflict({ x: 2.5, z: 15, dir: -1, speed: 1, waiting: false }, { ...car, speed: 0 }), false, 'car stopped');
+  assert.equal(pedestrianConflict({ x: 0, z: 20, dir: -1, speed: 1, waiting: false }, car), false, 'other side of the car');
 });

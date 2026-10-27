@@ -1,6 +1,6 @@
 import { rightOf, TRACK_OFFSET, type CityLayout, type CityNode } from './city.ts';
 import { edgeKey, entryOf, exitFor, exitOf, planExam, shortestPath, turnAt, type DirEdge, type Placement } from './cityRoute.ts';
-import { maneuverLabel, situations, STOP_SPEED, STOP_ZONE, type ExamFrame, type ExamSession, type Pedestrian, type RouteStep, type SituationProgress, type StagedProps } from './exam.ts';
+import { maneuverLabel, pedestrianConflict, situations, STOP_SPEED, STOP_ZONE, type ExamFrame, type ExamSession, type Pedestrian, type RouteStep, type SituationProgress, type StagedProps } from './exam.ts';
 import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
 import { distanceToStopLine, forwardOf, inside, type Approach, type Point } from './roads.ts';
 import type { Violation } from './rules.ts';
@@ -309,8 +309,8 @@ export class CityExamRunner implements ExamSession {
       if (!p.waiting) p[along] += p.dir * p.speed * dt;
       // In the city a pedestrian crosses once and leaves the crossing at the far curb.
       if (p[along] > p.max! || p[along] < p.min!) p.speed = 0;
-      const onCrossing = Math.abs(state[across] - p[across]) < 3 && state[along] > p.min! - 1 && state[along] < p.max! + 1;
-      if (onCrossing && Math.abs(state.speed) > .3 && !this.pedestrianFlagged && Math.hypot(p.x - state.x, p.z - state.z) < 3.3) {
+      const onCrossing = state[along] > p.min! - 1 && state[along] < p.max! + 1;
+      if (onCrossing && !this.pedestrianFlagged && pedestrianConflict(p, state)) {
         this.pedestrianFlagged = true;
         frame.judge.record('pedestrian', frame.time, state, 'Пешеход переходил проезжую часть, на которую вы поворачивали.', { situation: 'a2-pedestrian' });
       }

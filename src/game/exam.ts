@@ -163,6 +163,18 @@ export function situationOutcome(progress: SituationProgress, errors: number): S
 /** A pedestrian shuttling along a crosswalk: it walks along x or z between `min` and `max`. */
 export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; axis?: 'x' | 'z'; min?: number; max?: number; }
 
+/**
+ * Whether a moving car on the crossing fails to yield to this pedestrian: the pedestrian is in front of the car or still
+ * walking towards its lane. One who has already passed the car and walks away is not a conflict.
+ */
+export function pedestrianConflict(p: Pedestrian, car: { x: number; z: number; speed: number }) {
+  if (Math.abs(car.speed) <= .3) return false;
+  const along = p.axis === 'z' ? 'z' : 'x', across = along === 'x' ? 'z' : 'x';
+  if (Math.abs(car[across] - p[across]) > 3) return false;
+  const offset = p[along] - car[along], approaching = offset * p.dir < 0;
+  return Math.abs(offset) < (approaching ? 3.3 : 1.3);
+}
+
 /** What a running exam puts on the map besides the road: signs, stop lines, tracks and the controller. */
 export interface StagedProps { signs: PlacedSign[]; stopLines: [Point, Point][]; rails: TrafficLane[]; regulator: Point | null; }
 /** The exam or practice run as the engine and the UI see it, whatever the map. */
@@ -378,13 +390,14 @@ export class ExamRunner implements ExamSession {
       // Pedestrians stop rather than walk into the car standing on their path.
       p.waiting = Math.abs(p.x + p.dir * 1.2 - state.x) < 1.6 && Math.abs(p.z - state.z) < 2.6;
       if (!p.waiting) p.x += p.dir * p.speed * dt;
-      if (Math.abs(p.x) > CROSSWALK_HALF) { p.x = Math.sign(p.x) * CROSSWALK_HALF; p.dir = (-p.dir) as 1 | -1; }
-      if (carOnCrossing && Math.abs(state.speed) > .3 && !this.pedestrianFlagged && Math.abs(p.x - state.x) < 3.2) {
+      // A pedestrian crosses once and leaves the crossing at the far curb.
+      if (Math.abs(p.x) > CROSSWALK_HALF) p.speed = 0;
+      if (carOnCrossing && !this.pedestrianFlagged && pedestrianConflict(p, state)) {
         this.pedestrianFlagged = true;
         frame.judge.record('pedestrian', frame.time, state, 'Пешеход переходил проезжую часть, на которую вы поворачивали.', { situation: 'a2-pedestrian' });
       }
     }
-    if (this.stepIndex > this.steps.findIndex(s => s.slot === 'A2') && state.z > 30) this.pedestrians = [];
+    this.pedestrians = this.pedestrians.filter(p => p.speed > 0);
   }
 
   private judgeUTurn(frame: ExamFrame, say: string[]) {

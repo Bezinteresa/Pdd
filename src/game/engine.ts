@@ -27,7 +27,7 @@ export class DrivingEngine {
   private keys = new Set<string>();
   private world = createWorld();
   private renderer: THREE.WebGLRenderer;
-  private camera = new THREE.PerspectiveCamera(66, 1, .08, 300);
+  private camera = new THREE.PerspectiveCamera(74, 1, .08, 300);
   private mirrorCameras = [0, 1, 2].map(() => new THREE.PerspectiveCamera(55, 2.6, .2, 85));
   private targets = [0, 1, 2].map(() => new THREE.WebGLRenderTarget(384, 144));
   private overlayScene = new THREE.Scene();
@@ -313,7 +313,9 @@ export class DrivingEngine {
       this.mirrorAt = now;
       const q = this.world.car.quaternion; const pos = this.world.car.position;
       const localX = [-1.02, -.4, 1.02]; const targetX = [-5, -.4, 5];
-      this.mirrorCameras.forEach((camera, i) => { camera.position.copy(new THREE.Vector3(localX[i], 1.38, -.3).applyQuaternion(q).add(pos)); camera.lookAt(new THREE.Vector3(targetX[i], 1.4, 24).applyQuaternion(q).add(pos)); renderer.setRenderTarget(this.targets[i]); renderer.clear(); renderer.render(this.world.scene, camera); });
+      // The rear-view camera sits at the back of the roof so seats and headrests do not fill the mirror.
+      const localZ = [-.3, 2.1, -.3], localY = [1.38, 1.5, 1.38];
+      this.mirrorCameras.forEach((camera, i) => { camera.position.copy(new THREE.Vector3(localX[i], localY[i], localZ[i]).applyQuaternion(q).add(pos)); camera.lookAt(new THREE.Vector3(targetX[i], 1.4, 24).applyQuaternion(q).add(pos)); renderer.setRenderTarget(this.targets[i]); renderer.clear(); renderer.render(this.world.scene, camera); });
       renderer.setRenderTarget(null);
     }
     const parentRect = this.container.getBoundingClientRect();

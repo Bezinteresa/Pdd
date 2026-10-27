@@ -279,7 +279,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'"><Icon name="book" />Правила</button>
         <button :class="{ active: tab === 'progress' }" @click="tab = 'progress'"><Icon name="chart" />Прогресс</button>
       </nav>
-      <div class="header-right"><span class="prototype"><i></i> ВЕРСИЯ 0.8</span><button class="icon-button" aria-label="Настройки" @click="showSettings = true"><Icon name="gear" /></button></div>
+      <div class="header-right"><span class="prototype"><i></i> ВЕРСИЯ 0.9</span><button class="icon-button" aria-label="Настройки" @click="showSettings = true"><Icon name="gear" /></button></div>
     </header>
 
     <main v-show="tab === 'practice'" class="practice-layout">
@@ -332,7 +332,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         </div>
 
         <div v-if="!playing && !fatal" class="paused-label"><span>{{ started ? 'ПОЕЗДКА НА ПАУЗЕ' : 'ВСЁ НАЧИНАЕТСЯ С ПЕРВОГО МЕТРА' }}</span><div class="lesson-picker" aria-label="Выбор занятия"><button v-for="(item, index) in lessons" :key="item.id" :class="{ selected: lessonIndex === index }" @click="selectLesson(index)">{{ (index + 1).toString().padStart(2, '0') }} · {{ item.title }}</button><button class="practice-entry" :class="{ selected: !!practiceId }" @click="showPracticeList = true">Ситуации по очереди</button><button class="exam-entry" :class="{ selected: examView && !practiceId }" @click="showExamPicker = true">Экзамен с инспектором</button></div><button @click="play"><Icon name="play" :size="17" />{{ started ? 'Продолжить' : 'За руль' }}</button></div>
-        <footer class="scene-footer"><span><i></i> {{ playing ? 'Поездка идёт' : 'Готов к поездке' }}</span><span>{{ telemetry.fps }} FPS <b>·</b> WEB 0.2</span></footer>
+        <footer class="scene-footer"><span><i></i> {{ playing ? 'Поездка идёт' : 'Готов к поездке' }}</span><span>{{ telemetry.fps }} FPS <b>·</b> WEB 0.9</span></footer>
       </section>
 
       <aside class="lesson-panel">

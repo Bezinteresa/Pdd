@@ -1,31 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCity, cityLanes } from '../src/game/city.ts';
-import { onRoad, validateMap } from '../src/game/roads.ts';
+import { onRoad, speedLimitAt, validateMap } from '../src/game/roads.ts';
 import { signsAhead } from '../src/game/signs.ts';
 import { entryOf, exitOf, planExam, shortestPath, turnAt } from '../src/game/cityRoute.ts';
 import { readySituations } from '../src/game/exam.ts';
 
 const city = buildCity();
 
-test('city graph: 5×5 connected grid with the planned crossing kinds', () => {
+test('city graph: 7×7 grid and the ring road, connected, with the planned crossing kinds', () => {
   const nodes = Object.values(city.nodes);
-  assert.equal(nodes.length, 25);
-  assert.equal(city.edges.length, 40);
+  assert.equal(nodes.length, 49 + 32);
+  assert.equal(city.edges.length, 84 + 12 + 32);
   const seen = new Set([nodes[0].id]), queue = [nodes[0].id];
   while (queue.length) for (const next of city.nodes[queue.shift()!].links) if (!seen.has(next)) { seen.add(next); queue.push(next); }
-  assert.equal(seen.size, 25);
+  assert.equal(seen.size, 81);
   const kinds = (k: string) => nodes.filter(n => n.kind === k).map(n => n.id).sort();
-  assert.deepEqual(kinds('signal'), ['n0_-90', 'n0_0', 'n0_90']);
-  assert.deepEqual(kinds('main'), ['n-90_-90', 'n90_-90']);
-  assert.deepEqual(kinds('tram'), ['n-90_90', 'n90_90']);
+  assert.deepEqual(kinds('signal'), ['n0_-180', 'n0_-90', 'n0_0', 'n0_180', 'n0_90']);
+  assert.deepEqual(kinds('main'), ['n-180_-90', 'n-90_-90', 'n180_-90', 'n90_-90']);
+  assert.deepEqual(kinds('tram'), ['n-180_90', 'n-90_90', 'n180_90', 'n90_90']);
+  assert.equal(kinds('ring').length, 12);
 });
 
 test('city road map passes the map checks; stop lines and signs sit on or beside the road', () => {
   assert.deepEqual(validateMap(city.map), []);
   for (const a of city.map.approaches) assert.ok(a.stopLine.every(p => onRoad(city.map, p)), a.id);
-  assert.equal(city.map.approaches.filter(a => a.control === 'signal').length, 12);
-  assert.equal(city.map.crosswalks.length, 12);
+  assert.equal(city.map.approaches.filter(a => a.control === 'signal').length, 20);
+  assert.equal(city.map.crosswalks.length, 20);
 });
 
 test('priority signs address the right drivers', () => {
@@ -41,7 +42,7 @@ test('AI lanes run in the right-hand lane and know the signals they pass', () =>
   const byId = Object.fromEntries(lanes.map(l => [l.id, l]));
   assert.equal(byId['main-e'].offset, -86);
   assert.equal(byId['avenue-n'].offset, 4);
-  assert.deepEqual(byId['avenue-n'].approaches!.filter(a => a.control === 'signal').map(a => a.intersection).sort(), ['n0_-90', 'n0_0', 'n0_90']);
+  assert.deepEqual(byId['avenue-n'].approaches!.filter(a => a.control === 'signal').map(a => a.intersection).sort(), ['n0_-180', 'n0_-90', 'n0_0', 'n0_180', 'n0_90']);
   assert.deepEqual(byId['main-e'].approaches!.filter(a => a.control === 'signal').map(a => a.intersection), ['n0_-90']);
 });
 
@@ -67,4 +68,24 @@ test('route: any five ready situations get their own places and a connected orde
     let at = ['n0_180', 'n0_90'] as const as readonly [string, string];
     for (const p of plan) { assert.ok(shortestPath(city, at, entryOf(p)), p.situation); at = exitOf(p); }
   }
+});
+
+test('ring road: priority for the ring, 70 km/h after each junction', () => {
+  const onRing = signsAhead(city.signs, { x: 360 - 4, z: -20, heading: Math.PI }).map(s => s.sign.code);
+  assert.ok(onRing.includes('3.24'), onRing.join());
+  const joining = signsAhead(city.signs, { x: 320, z: 4, heading: Math.PI / 2 }).map(s => s.sign.code);
+  assert.ok(joining.includes('2.4'), joining.join());
+  assert.equal(speedLimitAt(city.map, { x: 356, z: 40, heading: Math.PI }), 70);
+  assert.equal(speedLimitAt(city.map, { x: 320, z: 4, heading: Math.PI / 2 }), 60);
+});
+
+test('Upper Town: raised crossings, streets climb in a straight line, the plain stays flat', () => {
+  assert.equal(city.height(180, -225), 9);
+  assert.equal(city.height(0, 0), 0);
+  // Street from the main road (z -90) up to the hill crossing at z -180.
+  const lo = city.height(180, -96), mid = city.height(180, -135), hi = city.height(180, -174);
+  assert.equal(lo, 0); assert.equal(hi, 9);
+  assert.ok(Math.abs(mid - 4.5) < .3, String(mid));
+  // Lots beside the climbing street stay on the plain; every lot avoids the roads.
+  for (const lot of city.lots) assert.ok(!onRoad(city.map, lot, -1), `${lot.x},${lot.z}`);
 });

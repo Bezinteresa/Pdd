@@ -28,6 +28,9 @@ function ramp() {
   return toonRamp;
 }
 const materials = new Map<string, THREE.MeshToonMaterial>();
+let toonVertex: THREE.MeshToonMaterial | null = null;
+/** One toon material for all batched plain-coloured pieces; the colour comes from the vertices. */
+function vertexToon() { toonVertex ??= new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: ramp() }); return toonVertex; }
 function material(color: string) { const c = toyColor(color); if (!materials.has(c)) materials.set(c, new THREE.MeshToonMaterial({ color: c, gradientMap: ramp() })); return materials.get(c)!; }
 export function box(parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, color: string) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material(color)); mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
@@ -119,27 +122,83 @@ export function houses(scene: THREE.Scene, lot: { x: number; z: number; w: numbe
     const x = lot.x + dx * lot.w * .23, z = lot.z + dz * lot.d * .23, w = lot.w * .38, d = lot.d * .37, h = 7 + (count * 7 % 11); count++;
     const body = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, .6), material(colors[count % colors.length])); body.position.set(x, h / 2 + .25, z); body.castShadow = body.receiveShadow = true; scene.add(body);
     roof(scene, w, d, x, h + .25, z, ['#e8836b', '#6fb38a', '#f2a65a', '#9c89c9', '#e07a6b'][count % 5]);
-    for (let y = 2.7; y < h; y += 2.8) for (let wx = -w / 2 + 2; wx < w / 2 - .5; wx += 3.3) { box(scene, 1.5, 1.3, .06, x + wx, y, z + d / 2 + .04, '#698782'); box(scene, 1.5, 1.3, .06, x + wx, y, z - d / 2 - .04, '#698782'); }
+    const windows: number[] = scene.userData.windows ??= [];
+    for (let y = 2.7; y < h; y += 2.8) for (let wx = -w / 2 + 2; wx < w / 2 - .5; wx += 3.3) windows.push(x + wx, y, z + d / 2 + .04, x + wx, y, z - d / 2 - .04);
     obstacles.push({ x, z, halfX: w / 2, halfZ: d / 2 });
   }
   return count;
 }
 /** Merges static primitives by material, then adds the lamps, the goal zone and the learner's car. */
-export function finishWorld(scene: THREE.Scene, obstacles: Obstacle[], slots: LampSlot[], goalAt: Point): World {
-  // Batch static primitives by material so windows and trees do not each cost a draw call.
+/** Ground height of a map at a point; flat maps omit it. */
+export type Ground = (x: number, z: number) => number;
+const CHUNK = 120;
+/**
+ * Lifts a world-space geometry onto the ground. 'drape' moves every vertex to the ground under it (markings, lot
+ * ground), 'base' lifts only the top half and keeps the bottom on the plain (road slabs become embankments), the
+ * default moves the whole piece by the ground under its centre (houses, trees, posts), 'none' leaves it.
+ */
+function lift(geometry: THREE.BufferGeometry, mode: string | undefined, ground: Ground) {
+  if (mode === 'none') return;
+  geometry.computeBoundingBox();
+  const b = geometry.boundingBox!, pos = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const thin = b.max.y - b.min.y < .35;
+  if (mode === 'base' || (thin && mode !== 'rigid')) {
+    const mid = (b.min.y + b.max.y) / 2;
+    for (let i = 0; i < pos.count; i++) if (mode !== 'base' || pos.getY(i) > mid) pos.setY(i, pos.getY(i) + ground(pos.getX(i), pos.getZ(i)));
+  } else {
+    const dy = ground((b.min.x + b.max.x) / 2, (b.min.z + b.max.z) / 2);
+    if (dy) { geometry.translate(0, dy, 0); return; }
+  }
+  pos.needsUpdate = true; geometry.computeBoundingBox();
+}
+/** Merges static primitives by material and map tile, then adds the lamps, the goal zone and the learner's car. */
+export function finishWorld(scene: THREE.Scene, obstacles: Obstacle[], slots: LampSlot[], goalAt: Point, ground?: Ground): World {
+  // Batch static primitives by material so windows and trees do not each cost a draw call. Batches are cut into
+  // 120 m tiles: each tile has its own bounds, so tiles outside the camera view are skipped (frustum culling).
   scene.updateMatrixWorld(true);
-  const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const batches = new Map<string, { material: THREE.Material; geometries: THREE.BufferGeometry[] }>();
   const staticMeshes: THREE.Mesh[] = [];
   scene.traverse(object => { if (object instanceof THREE.Mesh && !Array.isArray(object.material)) staticMeshes.push(object); });
-  for (const mesh of staticMeshes) { if (Array.isArray(mesh.material)) continue; const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld); const batch = batches.get(mesh.material) ?? []; batch.push(geometry); batches.set(mesh.material, batch); mesh.removeFromParent(); mesh.geometry.dispose(); }
-  for (const [mat, geometries] of batches) { const merged = mergeGeometries(geometries, false); if (merged) { const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh); } geometries.forEach(g => g.dispose()); }
+  const toonMaterials = new Set<THREE.Material>(materials.values());
+  for (const mesh of staticMeshes) {
+    const material = mesh.material as THREE.Material;
+    const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    if (ground) lift(geometry, mesh.userData.terrain ?? mesh.parent?.userData.terrain, ground);
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    const b = geometry.boundingBox!, size = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+    // Pieces larger than a tile (the ground, long road slabs) go to a shared batch that is always drawn.
+    const tile = size > CHUNK ? 'all' : `${Math.floor((b.min.x + b.max.x) / 2 / CHUNK)}:${Math.floor((b.min.z + b.max.z) / 2 / CHUNK)}`;
+    let key = `${material.uuid}|${tile}`, target = material;
+    // Plain-coloured pieces share one material: their colour goes into the vertices, so a tile is one draw call.
+    if (toonMaterials.has(material)) {
+      const color = (material as THREE.MeshToonMaterial).color, count = geometry.getAttribute('position').count;
+      const colors = new Float32Array(count * 3); for (let i = 0; i < count * 3; i += 3) { colors[i] = color.r; colors[i + 1] = color.g; colors[i + 2] = color.b; }
+      for (const name of Object.keys(geometry.attributes)) if (name !== 'position' && name !== 'normal') geometry.deleteAttribute(name);
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      // Indexed and plain geometries cannot be merged together, so each tile has up to two toon batches.
+      key = `toon|${geometry.index ? 'i' : 'n'}|${tile}`; target = vertexToon();
+    }
+    const batch = batches.get(key) ?? { material: target, geometries: [] }; batch.geometries.push(geometry); batches.set(key, batch);
+    mesh.removeFromParent(); mesh.geometry.dispose();
+  }
+  for (const { material, geometries } of batches.values()) { const merged = mergeGeometries(geometries, false); if (merged) { merged.computeBoundingSphere(); const mesh = new THREE.Mesh(merged, material); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh); } geometries.forEach(g => g.dispose()); }
+  // Windows are thousands of identical panes: one instanced mesh per tile draws them without merging geometry.
+  const panes: number[] = scene.userData.windows ?? [], tiles = new Map<string, number[]>();
+  for (let i = 0; i < panes.length; i += 3) { const key = `${Math.floor(panes[i] / CHUNK)}:${Math.floor(panes[i + 2] / CHUNK)}`; const list = tiles.get(key) ?? []; list.push(i); tiles.set(key, list); }
+  const pane = new THREE.BoxGeometry(1.5, 1.3, .06), matrix = new THREE.Matrix4();
+  for (const list of tiles.values()) {
+    const glass = new THREE.InstancedMesh(pane, material('#698782'), list.length);
+    list.forEach((i, k) => glass.setMatrixAt(k, matrix.makeTranslation(panes[i], panes[i + 1] + (ground?.(panes[i], panes[i + 2]) ?? 0), panes[i + 2])));
+    glass.computeBoundingSphere(); scene.add(glass);
+  }
+  delete scene.userData.windows;
   // Lamps are added after batching: each head owns materials that change with the signal phase.
   const signals: SignalHead[] = [];
   const lampGeometry = new THREE.CircleGeometry(.17, 16);
   // Lamps stay unlit basic materials so the signal colour reads the same in light and shade.
   for (const slot of slots) {
     const head: SignalHead = { group: slot.approach.group, approach: slot.approach, red: new THREE.MeshBasicMaterial({ color: '#4a3a36' }), yellow: new THREE.MeshBasicMaterial({ color: '#4a4636' }), green: new THREE.MeshBasicMaterial({ color: '#36463a' }) };
-    const face = new THREE.Group(); face.position.set(slot.x, 0, slot.z); face.rotation.y = slot.rotation; scene.add(face);
+    const face = new THREE.Group(); face.position.set(slot.x, ground?.(slot.x, slot.z) ?? 0, slot.z); face.rotation.y = slot.rotation; scene.add(face);
     [head.red, head.yellow, head.green].forEach((m, i) => { const l = new THREE.Mesh(lampGeometry, m); l.position.set(0, 3.97 - i * .47, .235); face.add(l); });
     signals.push(head);
   }
@@ -262,10 +321,17 @@ export function regulatorFigure(scene: THREE.Scene): RegulatorFigure {
     },
   };
 }
-function signTexture(code: string) {
+function signTexture(code: string, value?: number) {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
-  if (code === '2.5') {
+  if (code === '2.1') {
+    ctx.beginPath(); ctx.moveTo(128, 6); ctx.lineTo(250, 128); ctx.lineTo(128, 250); ctx.lineTo(6, 128); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(128, 46); ctx.lineTo(210, 128); ctx.lineTo(128, 210); ctx.lineTo(46, 128); ctx.closePath(); ctx.fillStyle = '#f5c518'; ctx.fill();
+  } else if (code === '3.24') {
+    ctx.beginPath(); ctx.arc(128, 128, 122, 0, Math.PI * 2); ctx.fillStyle = '#c8302a'; ctx.fill();
+    ctx.beginPath(); ctx.arc(128, 128, 94, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.fillStyle = '#1d2120'; ctx.font = '700 96px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(value ?? ''), 128, 134);
+  } else if (code === '2.5') {
     ctx.beginPath(); for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx.lineTo(128 + Math.cos(a) * 124, 128 + Math.sin(a) * 124); } ctx.closePath();
     ctx.fillStyle = '#c8302a'; ctx.fill(); ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = '700 74px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('STOP', 128, 132);
@@ -285,14 +351,23 @@ function signTexture(code: string) {
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
 }
 /** Sign on a post; `facing` is the direction its face points (towards the drivers it addresses). */
-export function roadSign(scene: THREE.Scene, code: string, at: Point, facing: Point) {
+const signFaces = new Map<string, THREE.MeshBasicMaterial>();
+/** Shared face material for the standing signs of a map (batched with the world); staged signs get their own. */
+function signFace(code: string, value: number | undefined, shared: boolean) {
+  const key = `${code}:${value ?? ''}`;
+  if (shared && signFaces.has(key)) return signFaces.get(key)!;
+  const m = new THREE.MeshBasicMaterial({ map: signTexture(code, value), transparent: true, side: THREE.DoubleSide });
+  if (shared) signFaces.set(key, m);
+  return m;
+}
+export function roadSign(scene: THREE.Scene, code: string, at: Point, facing: Point, value?: number, shared = false) {
   const g = new THREE.Group(); g.position.set(at.x, 0, at.z); g.rotation.y = Math.atan2(facing.x, facing.z); scene.add(g);
   box(g, .09, 2.6, .09, 0, 1.3, 0, '#8b9690');
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: signTexture(code), transparent: true, side: THREE.DoubleSide })); face.position.set(0, 2.55, .06); g.add(face);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), signFace(code, value, shared)); face.position.set(0, 2.55, .06); g.add(face);
   return g;
 }
 /** Removes a prop group and frees what it owns; shared materials from the cache stay. */
 export function disposeProp(object: THREE.Object3D) {
   object.removeFromParent();
-  object.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); const m = o.material as THREE.Material & { map?: THREE.Texture | null }; if (![...materials.values()].includes(m as THREE.MeshToonMaterial)) { m.map?.dispose(); m.dispose(); } } });
+  object.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); const m = o.material as THREE.Material & { map?: THREE.Texture | null }; if (![...materials.values()].includes(m as THREE.MeshToonMaterial) && ![...signFaces.values()].includes(m as THREE.MeshBasicMaterial)) { m.map?.dispose(); m.dispose(); } } });
 }

@@ -22,7 +22,13 @@ export function overlapsCar(state: Pick<VehicleState, 'x' | 'z' | 'heading'>, bo
     Math.abs(dx * s - dz * c) < length + box.halfX * Math.abs(s) + box.halfZ * Math.abs(c);
 }
 /** Edges of the drivable world; beyond them the car stops as at a wall. */
-export interface WorldBounds { minX: number; maxX: number; minZ: number; maxZ: number; }
+export interface WorldBounds { minX: number; maxX: number; minZ: number; maxZ: number; ground?: (x: number, z: number) => number; }
+const GRAVITY = 9.81;
+/** Rise of the road per metre along the heading (positive uphill), measured over the wheelbase. */
+export function gradeAt(ground: (x: number, z: number) => number, x: number, z: number, heading: number) {
+  const fx = Math.sin(heading) * 1.3, fz = -Math.cos(heading) * 1.3;
+  return (ground(x + fx, z + fz) - ground(x - fx, z - fz)) / 2.6;
+}
 export const districtBounds: WorldBounds = { minX: -145, maxX: 145, minZ: -145, maxZ: 149 };
 export function stepVehicle(state: VehicleState, input: DriveInput, dt: number, obstacles: Obstacle[], bounds: WorldBounds = districtBounds): boolean {
   const previousSpeed = state.speed;
@@ -35,7 +41,9 @@ export function stepVehicle(state: VehicleState, input: DriveInput, dt: number, 
     const creep = direction !== 0 && gas < 0.05 && brake < 0.01 && Math.abs(state.speed) < 1.2 ? 0.65 : 0;
     const drive = direction * (gas * (state.gear === 'R' ? 2.6 : 3.8) + creep);
     const drag = 0.1 + 0.012 * state.speed * state.speed;
-    state.speed += drive * dt;
+    // On a slope gravity pulls the car back: without gas or brake it rolls, as on a real hill start.
+    const grade = bounds.ground ? gradeAt(bounds.ground, state.x, state.z, state.heading) : 0;
+    state.speed += (drive - GRAVITY * grade) * dt;
     const slowdown = (drag + brake * 7.5 + (state.handbrake ? 12 : 0)) * dt;
     state.speed = Math.sign(state.speed) * Math.max(0, Math.abs(state.speed) - slowdown);
     state.speed = clamp(state.speed, -5.5, 22);

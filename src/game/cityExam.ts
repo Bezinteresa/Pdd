@@ -1,4 +1,4 @@
-import { rightOf, TRACK_OFFSET, type CityLayout, type CityNode } from './city.ts';
+import { edgeLength, rightOf, TRACK_OFFSET, type CityLayout, type CityNode } from './city.ts';
 import { edgeKey, entryOf, exitFor, exitOf, planExam, shortestPath, turnAt, type DirEdge, type Placement } from './cityRoute.ts';
 import { maneuverLabel, pedestrianConflict, situations, STOP_SPEED, STOP_ZONE, type ExamFrame, type ExamSession, type Pedestrian, type RouteStep, type SituationProgress, type StagedProps } from './exam.ts';
 import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
@@ -207,14 +207,15 @@ export class CityExamRunner implements ExamSession {
       const [u, v] = this.path[i], next = this.path[i + 1];
       const staged = t?.kind === 'node' && i === this.path.length - 1 && v === t.node;
       const maneuver = staged ? t!.maneuver! : next ? turnAt(this.city, u, v, next[1]) : 'straight';
-      if (maneuver !== 'straight' || staged) {
+      // A bend of the ring road with no other way is not a command.
+      if ((maneuver !== 'straight' && this.city.nodes[v].links.length > 2) || staged) {
         if (distance > COMMAND_RANGE) break;
         const near = distance < 30, metres = Math.max(20, Math.round(distance / 10) * 10);
         const text = maneuver === 'straight' ? (near ? 'На перекрёстке — прямо.' : `Через ${metres} метров на перекрёстке — прямо.`) : near ? `Поверните ${turnWord[maneuver]}.` : `Через ${metres} метров поверните ${turnWord[maneuver]}.`;
         this.speak(say, `${v}-${maneuver}-${near ? 'near' : 'far'}`, text);
         return;
       }
-      if (next) distance += this.city.spacing;
+      if (next) distance += edgeLength(this.city, next[0], next[1]);
     }
     this.speak(say, `straight-${edgeKey(this.current)}`, 'Двигайтесь прямо до следующего указания.');
   }
@@ -270,7 +271,7 @@ export class CityExamRunner implements ExamSession {
         : s === 'b-tram' || car.kind === 'tram' ? { rule: 'ПДД 13.11', ruleIds: ['13.11', '1.2'], detail: 'Трамвай, имеющий преимущество, был вынужден тормозить.' }
         : s === 'd-stop' ? { rule: 'ПДД 13.9, знак 2.5', ruleIds: ['sign-2.5', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
         : s === 'd-yield' ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
-        : this.nodeAt(frame.state)?.kind === 'main' ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Выезжая со второстепенной дороги, вы вынудили тормозить автомобиль на главной.' }
+        : ['main', 'ring'].includes(this.nodeAt(frame.state)?.kind ?? '') ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Выезжая со второстепенной дороги, вы вынудили тормозить автомобиль на главной.' }
         : this.nodeAt(frame.state)?.kind === 'signal' ? { rule: 'ПДД 13.4', ruleIds: ['13.4', '1.2'], detail: 'На регулируемом перекрёстке встречный или поперечный транспорт был вынужден тормозить: при повороте налево на зелёный уступите встречным.' }
         : { rule: 'ПДД 1.2', ruleIds: ['1.2'], detail: 'Другой участник движения был вынужден резко тормозить из-за вашего манёвра.' };
       frame.judge.record('yield', frame.time, frame.state, rule.detail, { rule: rule.rule, ruleIds: rule.ruleIds, situation: s });

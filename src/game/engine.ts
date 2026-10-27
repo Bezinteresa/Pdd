@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createWorld, disposeProp, paintSignal, pedestrianFigure, rails, regulatorFigure, roadSign, trafficCar, tramCar, type RegulatorFigure } from './world';
-import { clamp, districtBounds, initialVehicle, selectGear, stepVehicle, type Gear, type DriveInput, type VehicleState } from './vehicle';
+import { clamp, districtBounds, gradeAt, initialVehicle, selectGear, stepVehicle, type Gear, type DriveInput, type VehicleState, type WorldBounds } from './vehicle';
 import { lessons, type Lesson } from './lesson';
 import { activeZone, approachAhead, cityMap, type Approach, type RoadMap } from './roads';
 import { lampsAt, type Lamp } from './signals';
@@ -16,7 +16,7 @@ import { allowedManeuvers, regulatorAt, sideOf } from './regulator';
 
 export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonId: string; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; violations: Violation[]; signalAhead: { lamp: Lamp; distance: number } | null; signs: Pick<PlacedSign, 'id' | 'code' | 'value'>[]; regulatorAhead: { pose: ControllerPose; side: Side; allowed: Maneuver[]; distance: number } | null; tripTime: number; throttle: number; brake: number; exam: ExamTelemetry | null; mapKind: MapKind; pose: { x: number; z: number; heading: number }; }
 export type MapKind = 'district' | 'city';
-const CITY_BOUNDS = { minX: -240, maxX: 240, minZ: -240, maxZ: 240 };
+const CITY_EDGE = 400;
 export interface ExamTelemetry { practice: string | null; selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; progress: Record<string, SituationProgress>; route: string[]; target: string | null; }
 export type CameraMode = 'cockpit' | 'chase';
 export type Look = 'forward' | 'left' | 'rear' | 'right';
@@ -138,12 +138,12 @@ export class DrivingEngine {
     const scene = this.world.scene, props = exam.props();
     for (const lane of props.rails) this.examProps.push(rails(scene, lane.offset, lane.start, lane.end));
     this.examSignList = props.signs;
-    for (const sign of props.signs) this.examProps.push(roadSign(scene, sign.code, sign.at, sign.facing));
+    for (const sign of props.signs) { const g = roadSign(scene, sign.code, sign.at, sign.facing, sign.value); g.position.y = this.ground(sign.at.x, sign.at.z); this.examProps.push(g); }
     for (const [a, b] of props.stopLines) {
       const line = new THREE.Mesh(new THREE.BoxGeometry(Math.max(Math.abs(b.x - a.x), .4), .02, Math.max(Math.abs(b.z - a.z), .4)), new THREE.MeshBasicMaterial({ color: '#f2eddb' }));
       line.position.set((a.x + b.x) / 2, .15, (a.z + b.z) / 2); scene.add(line); this.examProps.push(line);
     }
-    if (props.regulator) { this.regulator = regulatorFigure(scene); this.regulator.group.position.set(props.regulator.x, 0, props.regulator.z); this.examProps.push(this.regulator.group); }
+    if (props.regulator) { this.regulator = regulatorFigure(scene); this.regulator.group.position.set(props.regulator.x, this.ground(props.regulator.x, props.regulator.z), props.regulator.z); this.examProps.push(this.regulator.group); }
   }
   endExam() {
     this.examProps.forEach(disposeProp); this.examProps = []; this.regulator = null;
@@ -204,7 +204,7 @@ export class DrivingEngine {
     const lampFor = (a: Approach): Lamp | null => ruled(a) || a.control === 'none' ? null : lamps[a.group];
     const forTraffic = (a: Approach): Lamp | null => { if (!ruled(a)) return lampFor(a); const phase = regulatorAt(this.simTime); return allowedManeuvers(phase.pose, sideOf(phase.facing, a.dir)).includes('straight') ? 'green' : 'red'; };
     const forced = this.traffic.step(1 / 60, lamps, this.state, forTraffic);
-    const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles.concat(this.traffic.obstacles()), this.mapKind === 'city' ? CITY_BOUNDS : districtBounds);
+    const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles.concat(this.traffic.obstacles()), this.bounds());
     const counted = hit && now - this.collisionAt > 1500;
     if (counted) { this.collisions++; this.collisionAt = now; }
     const before = this.judge.violations.length;
@@ -220,7 +220,7 @@ export class DrivingEngine {
     this.simTime += 1 / 60;
     if (this.exam) {
       const goal = this.exam.goal(); this.world.goal.visible = !!goal;
-      if (goal) { this.world.goal.position.set(goal.x, .17, goal.z); this.world.goal.rotation.y = -(goal.heading ?? 0); }
+      if (goal) { this.world.goal.position.set(goal.x, .17 + this.ground(goal.x, goal.z), goal.z); this.world.goal.rotation.y = -(goal.heading ?? 0); }
     } else this.updateLesson();
     if (this.state.signal && this.state.signal !== 'hazard') { this.turnAmount += this.state.heading - this.lastHeading; const matched = this.state.signal === 'right' ? this.turnAmount > .5 : this.turnAmount < -.5; if (matched && Math.abs(this.state.steer) < .08) { this.state.signal = null; this.turnAmount = 0; } }
     this.lastHeading = this.state.heading;
@@ -257,7 +257,7 @@ export class DrivingEngine {
   }
   private updateTraffic() {
     const alive = new Set<number>();
-    for (const car of this.traffic.cars) { const p = carPosition(car), mesh = this.meshFor(car); mesh.position.set(p.x, 0, p.z); mesh.rotation.y = -p.heading; alive.add(car.id); }
+    for (const car of this.traffic.cars) { const p = carPosition(car), mesh = this.meshFor(car); mesh.position.set(p.x, this.ground(p.x, p.z), p.z); mesh.rotation.y = -p.heading; alive.add(car.id); }
     for (const [id, mesh] of this.trafficMeshes) if (!alive.has(id)) { disposeProp(mesh); this.trafficMeshes.delete(id); }
     const lamps = lampsAt(this.simTime);
     for (const head of this.world.signals) paintSignal(head, this.exam?.controlledByRegulator(head.approach) ? 'off' : lamps[head.group], this.simTime);
@@ -265,7 +265,7 @@ export class DrivingEngine {
     const people = this.exam?.pedestrians ?? [];
     while (this.pedestrianMeshes.length < people.length) this.pedestrianMeshes.push(pedestrianFigure(this.world.scene, ['#c0614c', '#4f78a0'][this.pedestrianMeshes.length % 2]));
     while (this.pedestrianMeshes.length > people.length) disposeProp(this.pedestrianMeshes.pop()!);
-    people.forEach((p, i) => { const m = this.pedestrianMeshes[i]; m.position.set(p.x, p.waiting ? 0 : Math.abs(Math.sin(this.simTime * 7 + i)) * .04, p.z); m.rotation.y = p.axis === 'z' ? (p.dir > 0 ? Math.PI : 0) : p.dir > 0 ? -Math.PI / 2 : Math.PI / 2; });
+    people.forEach((p, i) => { const m = this.pedestrianMeshes[i]; m.position.set(p.x, this.ground(p.x, p.z) + (p.waiting ? 0 : Math.abs(Math.sin(this.simTime * 7 + i)) * .04), p.z); m.rotation.y = p.axis === 'z' ? (p.dir > 0 ? Math.PI : 0) : p.dir > 0 ? -Math.PI / 2 : Math.PI / 2; });
   }
   /** Renders a heading-up top view around the car into a small JPEG. */
   private captureSnapshot(id: number) {
@@ -286,9 +286,19 @@ export class DrivingEngine {
     ctx.putImageData(image, 0, 0);
     this.snapshots.set(id, canvas.toDataURL('image/jpeg', .82));
   }
+private sunScene: THREE.Scene | null = null; private sun: THREE.DirectionalLight | undefined;
+  private sunLight() {
+    if (this.sunScene !== this.world.scene) { this.sunScene = this.world.scene; this.sun = this.world.scene.children.find((o): o is THREE.DirectionalLight => o instanceof THREE.DirectionalLight); if (this.sun && !this.sun.target.parent) this.world.scene.add(this.sun.target); }
+    return this.sun;
+  }
+    /** Ground height under a point of the current map. */
+  private ground = (x: number, z: number) => this.mapKind === 'city' ? this.city.height(x, z) : 0;
+  private bounds(): WorldBounds { return this.mapKind === 'city' ? { minX: -CITY_EDGE, maxX: CITY_EDGE, minZ: -CITY_EDGE, maxZ: CITY_EDGE, ground: this.ground } : districtBounds; }
   private updateCar(dt: number) {
     const { car, shell, wheel, tires, frontTires } = this.world;
-    car.position.set(this.state.x, 0, this.state.z); car.rotation.y = -this.state.heading;
+    car.position.set(this.state.x, this.ground(this.state.x, this.state.z), this.state.z);
+    // Yaw first, then the nose follows the slope of the street.
+    car.rotation.order = 'YXZ'; car.rotation.y = -this.state.heading; car.rotation.x = this.mapKind === 'city' ? Math.atan(gradeAt(this.ground, this.state.x, this.state.z, this.state.heading)) : 0;
     const factor = 1 - Math.exp(-5 * dt); const pitch = this.settings.motion ? this.state.acceleration * .008 : 0; const roll = this.settings.motion ? clamp(this.state.speed * this.state.speed * this.state.steer * .0008, -.035, .035) : 0;
     shell.rotation.x += (pitch - shell.rotation.x) * factor; shell.rotation.z += (roll - shell.rotation.z) * factor;
     wheel.rotation.z = -this.state.steer * 5; tires.forEach(t => t.rotation.x -= this.state.speed * dt / .35); frontTires.forEach(t => t.rotation.y = -this.state.steer * .4);
@@ -298,12 +308,16 @@ export class DrivingEngine {
     const desiredPan = this.look === 'left' ? .9 : this.look === 'right' ? -.9 : 0;
     this.pan += (desiredPan - this.pan) * (1 - Math.exp(-6 * dt));
     const position = this.cameraMode === 'cockpit' ? new THREE.Vector3(-.43, 1.46, .23) : new THREE.Vector3(0, 4.8, 9.3);
-    const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -h);
+    // The cockpit pitches with the car on a hill; the chase camera only turns with it.
+    const quaternion = this.cameraMode === 'cockpit' ? car.quaternion.clone() : new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -h);
     position.applyQuaternion(quaternion).add(car.position);
     if (this.cameraMode === 'cockpit' && this.settings.motion) position.y += this.world.shell.rotation.x * .2;
     if (!this.cameraReady || this.cameraMode === 'cockpit') this.camera.position.copy(position); else this.camera.position.lerp(position, 1 - Math.exp(-7 * dt));
     const look = this.look === 'rear' && this.cameraMode === 'cockpit' ? new THREE.Vector3(-.25, 1.8, -1.5) : new THREE.Vector3(-.43 - Math.sin(this.pan) * 9, this.cameraMode === 'cockpit' ? 1.5 : .8, -12 * Math.cos(this.pan));
     this.camera.lookAt(look.applyQuaternion(quaternion).add(car.position)); this.cameraReady = true;
+    // The sun's shadow box (±90 m) travels with the car, so the big city has shadows wherever you drive.
+    const sun = this.sunLight();
+    if (sun) { sun.target.position.copy(car.position); sun.position.set(car.position.x - 45, car.position.y + 75, car.position.z + 45); sun.target.updateMatrixWorld(); }
     // Show cabin dashboard/steering in first person; hide only its roof to avoid obstructing the driver's view.
   }
   private render(now: number) {

@@ -5,7 +5,8 @@ import { COMFORT_DECEL } from './rules.ts';
 
 // Scripted vehicles on straight lanes. Position s grows along the travel direction.
 // Looping lanes wrap at the street ends; one-shot lanes (exam actors) drop the vehicle once it has left.
-export interface TrafficLane { id: string; approach?: Approach; axis: 'x' | 'z'; sign: 1 | -1; offset: number; start: number; end: number; loop: boolean; }
+/** A straight lane; `approaches` are the stop lines it meets on the way (a long avenue passes several intersections). */
+export interface TrafficLane { id: string; approach?: Approach; approaches?: Approach[]; axis: 'x' | 'z'; sign: 1 | -1; offset: number; start: number; end: number; loop: boolean; }
 export type VehicleKind = 'car' | 'tram';
 export interface TrafficCar { id: number; lane: TrafficLane; s: number; speed: number; color: string; kind: VehicleKind; halfLength: number; v0: number; }
 export type PlayerPose = Pick<VehicleState, 'x' | 'z' | 'heading' | 'speed'>;
@@ -54,7 +55,7 @@ export class TrafficSystem {
   }
 
   /** Free gap from the car's front to the next thing it must not hit, that thing's speed, and whether it is the learner. */
-  private constraint(car: TrafficCar, signal: (approach: Approach) => Lamp, player: PlayerPose): [number, number, boolean] {
+  private constraint(car: TrafficCar, signal: (approach: Approach) => Lamp | null, player: PlayerPose): [number, number, boolean] {
     const lane = car.lane, length = lane.end - lane.start, front = car.s + car.halfLength;
     let gap = Infinity, leaderSpeed = 0, byPlayer = false;
     for (const other of this.cars) {
@@ -65,11 +66,16 @@ export class TrafficSystem {
       if (d < gap) { gap = d; leaderSpeed = other.speed; }
     }
     // Signal: hold before the stop line unless already committed (past it, or too close to stop comfortably on yellow).
-    if (lane.approach) {
-      const toLine = distanceToStopLine(lane.approach, carPosition(car)) - car.halfLength - .5;
-      const lamp = signal(lane.approach);
-      const mustStop = !permits(lamp) && toLine > -.5 && !(lamp === 'yellow' && toLine < car.speed * car.speed / (2 * COMFORT_DECEL));
-      if (mustStop && toLine < gap) { gap = Math.max(toLine, 0); leaderSpeed = 0; }
+    // Only the next stop line ahead matters; one already passed or without a signal (null) is ignored.
+    let next: { approach: Approach; toLine: number } | null = null;
+    for (const approach of lane.approaches ?? (lane.approach ? [lane.approach] : [])) {
+      const toLine = distanceToStopLine(approach, carPosition(car)) - car.halfLength - .5;
+      if (toLine > -.5 && (!next || toLine < next.toLine)) next = { approach, toLine };
+    }
+    const lamp = next && signal(next.approach);
+    if (next && lamp) {
+      const mustStop = !permits(lamp) && !(lamp === 'yellow' && next.toLine < car.speed * car.speed / (2 * COMFORT_DECEL));
+      if (mustStop && next.toLine < gap) { gap = Math.max(next.toLine, 0); leaderSpeed = 0; }
     }
     // Learner: anything overlapping the lane band ahead is treated as a stopped obstacle.
     const along = (lane.axis === 'x' ? player.x : player.z) * lane.sign, lateral = lane.axis === 'x' ? player.z : player.x;
@@ -84,7 +90,7 @@ export class TrafficSystem {
   }
 
   /** Advances all vehicles; returns hard braking forced by the learner crossing or entering a lane. */
-  step(dt: number, lamps: Lamps, player: PlayerPose, signal: (approach: Approach) => Lamp = a => lamps[a.group]): ForcedBrake[] {
+  step(dt: number, lamps: Lamps, player: PlayerPose, signal: (approach: Approach) => Lamp | null = a => a.control === 'none' ? null : lamps[a.group]): ForcedBrake[] {
     const forced: ForcedBrake[] = [];
     const f = forwardOf(player.heading);
     const results = this.cars.map(car => {

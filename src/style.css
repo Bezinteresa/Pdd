@@ -230,3 +230,8 @@
 .regulator-icon{width:34px;height:38px;padding:2px;border-width:2px;border-radius:7px}
 .regulator-text{font-size:10px;padding:3px 6px;max-width:130px}
 .regulator-text strong{font-size:10px}.regulator-text small{display:none}}
+
+/* City schema: in the exam side panel, and optionally over the scene */
+.panel-map{margin-top:12px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+.map-overlay{position:absolute;left:22px;top:118px;width:170px;border-radius:12px;overflow:hidden;box-shadow:0 4px 14px #0003;z-index:3;pointer-events:none;opacity:.92}
+@media(max-height:600px) and (orientation:landscape){.map-overlay{top:auto;bottom:150px;left:auto;right:150px;width:96px}}

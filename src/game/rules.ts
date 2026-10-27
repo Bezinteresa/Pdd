@@ -1,5 +1,5 @@
-import { approachAhead, distanceToStopLine, forwardOf, inside, maneuverThrough, onRoad, segmentsCross, speedLimitAt, type Point, type RoadMap } from './roads.ts';
-import { lampLabel, permits, type Lamps } from './signals.ts';
+import { approachAhead, distanceToStopLine, forwardOf, inside, maneuverThrough, onRoad, segmentsCross, speedLimitAt, type Approach, type Point, type RoadMap } from './roads.ts';
+import { lampLabel, permits, type Lamp, type Lamps } from './signals.ts';
 import type { VehicleState } from './vehicle.ts';
 
 export type ViolationCode = 'belt' | 'speed' | 'red-light' | 'yellow-light' | 'turn-signal' | 'off-road' | 'collision' | 'yield' | 'stop-sign' | 'pedestrian' | 'regulator' | 'route' | 'u-turn';
@@ -53,9 +53,9 @@ export class TripJudge {
   private moving = false;
   private armed = new Map<string, boolean>();
   private yellowCanStop = new Map<string, boolean>();
-  private previousLamps: Lamps | null = null;
+  private previousLamps = new Map<string, Lamp | null>();
   private signalSeen = { left: -Infinity, right: -Infinity };
-  private inIntersection = new Map<string, { heading: number; left: boolean; right: boolean }>();
+  private inIntersection = new Map<string, { heading: number; at: Point; left: boolean; right: boolean }>();
 
   private map: RoadMap;
   constructor(map: RoadMap) { this.map = map; for (const a of map.approaches) this.armed.set(a.id, true); }
@@ -72,7 +72,12 @@ export class TripJudge {
   signalRecently(side: 'left' | 'right', time: number, window = SIGNAL_MEMORY) { return this.signalSeen[side] >= time - window; }
 
   /** Advance one fixed step. Returns violations recorded during this step. */
-  update(prev: Pose, state: VehicleState, time: number, lamps: Lamps, collided = false): Violation[] {
+  /**
+   * `lamps` gives the signal for each approach: either the shared signal groups, or a function that returns
+   * the lamp per approach and null where no signal applies (unregulated approach, controller on duty).
+   */
+  update(prev: Pose, state: VehicleState, time: number, lamps: Lamps | ((approach: Approach) => Lamp | null), collided = false): Violation[] {
+    const lampOf = typeof lamps === 'function' ? lamps : (a: Approach) => a.control === 'none' ? null : lamps[a.group];
     const before = this.violations.length;
     const speed = Math.abs(state.speed);
 
@@ -92,25 +97,27 @@ export class TripJudge {
 
     // Yellow onset: remember whether a comfortable stop was still possible for each approach.
     for (const approach of this.map.approaches) {
-      const lamp = lamps[approach.group];
-      if (lamp === 'yellow' && this.previousLamps?.[approach.group] !== 'yellow') {
+      const lamp = lampOf(approach);
+      if (lamp === 'yellow' && this.previousLamps.get(approach.id) !== 'yellow') {
         const distance = Math.min(...frontPoints(state).map(p => distanceToStopLine(approach, p)));
         const ahead = approachAhead(this.map, state, 150)?.approach.id === approach.id;
         this.yellowCanStop.set(approach.id, ahead && distance > speed * speed / (2 * COMFORT_DECEL) + .5);
       }
       if (lamp !== 'yellow') this.yellowCanStop.delete(approach.id);
+      this.previousLamps.set(approach.id, lamp);
     }
 
     // Stop lines: swept front points against each line, forward direction only.
     const from = frontPoints(prev), to = frontPoints(state), f = forwardOf(state.heading);
     for (const approach of this.map.approaches) {
+      const lamp = lampOf(approach);
+      if (!lamp) continue;
       const behind = Math.max(...to.map(p => distanceToStopLine(approach, p)));
       if (behind > 6) this.armed.set(approach.id, true);
       if (!this.armed.get(approach.id)) continue;
       const movingForward = state.speed > 0 && approach.dir.x * f.x + approach.dir.z * f.z > .3;
       if (!movingForward || !from.some((p, i) => segmentsCross(p, to[i], approach.stopLine[0], approach.stopLine[1]))) continue;
       this.armed.set(approach.id, false);
-      const lamp = lamps[approach.group];
       this.event('stop-line', time, state, `${approach.id}: ${lamp}`);
       if (lamp === 'red' || lamp === 'redYellow') this.add('red-light', time, state, `Стоп-линия пересечена на ${lampLabel[lamp]} сигнал. Остановитесь перед стоп-линией и дождитесь зелёного.`);
       else if (lamp === 'yellow' && this.yellowCanStop.get(approach.id)) this.add('yellow-light', time, state, 'Жёлтый включился, когда до стоп-линии было достаточно места для плавной остановки. Продолжать движение можно, только если остановиться без экстренного торможения нельзя.');
@@ -124,10 +131,10 @@ export class TripJudge {
     }
     for (const crossing of this.map.intersections) {
       const isInside = inside(crossing.area, state), entry = this.inIntersection.get(crossing.id);
-      if (isInside && !entry) { this.inIntersection.set(crossing.id, { heading: state.heading, left: this.signalSeen.left >= time - SIGNAL_MEMORY, right: this.signalSeen.right >= time - SIGNAL_MEMORY }); this.event('enter-intersection', time, state, crossing.id); }
+      if (isInside && !entry) { this.inIntersection.set(crossing.id, { heading: state.heading, at: { x: state.x, z: state.z }, left: this.signalSeen.left >= time - SIGNAL_MEMORY, right: this.signalSeen.right >= time - SIGNAL_MEMORY }); this.event('enter-intersection', time, state, crossing.id); }
       if (!isInside && entry) {
         this.inIntersection.delete(crossing.id); this.event('exit-intersection', time, state, crossing.id);
-        const turn = maneuverThrough(crossing.area, entry.heading, state);
+        const turn = maneuverThrough(crossing.area, entry.heading, state, entry.at);
         const side = turn === 'right' || turn === 'left' ? turn : null;
         if (side && !entry[side]) this.add('turn-signal', time, state, `${side === 'right' ? 'Правый' : 'Левый'} поворот выполнен без заблаговременно включённого указателя.`);
       }
@@ -139,7 +146,6 @@ export class TripJudge {
 
     if (collided) { this.event('collision', time, state); this.add('collision', time, state, 'Держите дистанцию и боковой интервал, снижайте скорость заранее.'); }
 
-    this.previousLamps = { ...lamps };
     return this.violations.slice(before);
   }
 }

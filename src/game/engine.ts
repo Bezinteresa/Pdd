@@ -1,21 +1,26 @@
 import * as THREE from 'three';
 import { createWorld, disposeProp, paintSignal, pedestrianFigure, rails, regulatorFigure, roadSign, trafficCar, tramCar, type RegulatorFigure } from './world';
-import { clamp, initialVehicle, selectGear, stepVehicle, type Gear, type DriveInput, type VehicleState } from './vehicle';
+import { clamp, districtBounds, initialVehicle, selectGear, stepVehicle, type Gear, type DriveInput, type VehicleState } from './vehicle';
 import { lessons, type Lesson } from './lesson';
-import { activeZone, approachAhead, cityMap } from './roads';
+import { activeZone, approachAhead, cityMap, type Approach, type RoadMap } from './roads';
 import { lampsAt, type Lamp } from './signals';
 import { TripJudge, type Violation } from './rules';
 import { carPosition, crossStreetLanes, TrafficSystem, type TrafficCar } from './traffic';
-import { ExamRunner, examSigns, practiceScenes, situations, stopLineD, tramTrack, type RouteStep, type SituationProgress } from './exam';
+import { ExamRunner, practiceScenes, situations, type ExamSession, type RouteStep, type SituationProgress } from './exam';
+import { buildCity, cityLanes, cityTrafficLayout } from './city';
+import { createCityWorld } from './cityWorld';
+import { CITY_START, CityExamRunner } from './cityExam';
 import { SignWatch, zoneSigns, type PlacedSign } from './signs';
 import type { Maneuver, Pose as ControllerPose, Side } from './regulator';
 import { allowedManeuvers, regulatorAt, sideOf } from './regulator';
 
-export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonId: string; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; violations: Violation[]; signalAhead: { lamp: Lamp; distance: number } | null; signs: Pick<PlacedSign, 'id' | 'code' | 'value'>[]; regulatorAhead: { pose: ControllerPose; side: Side; allowed: Maneuver[]; distance: number } | null; tripTime: number; throttle: number; brake: number; exam: ExamTelemetry | null; }
-export interface ExamTelemetry { practice: string | null; selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; progress: Record<string, SituationProgress>; }
+export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonId: string; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; violations: Violation[]; signalAhead: { lamp: Lamp; distance: number } | null; signs: Pick<PlacedSign, 'id' | 'code' | 'value'>[]; regulatorAhead: { pose: ControllerPose; side: Side; allowed: Maneuver[]; distance: number } | null; tripTime: number; throttle: number; brake: number; exam: ExamTelemetry | null; mapKind: MapKind; pose: { x: number; z: number; heading: number }; }
+export type MapKind = 'district' | 'city';
+const CITY_BOUNDS = { minX: -240, maxX: 240, minZ: -240, maxZ: 240 };
+export interface ExamTelemetry { practice: string | null; selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; progress: Record<string, SituationProgress>; route: string[]; target: string | null; }
 export type CameraMode = 'cockpit' | 'chase';
 export type Look = 'forward' | 'left' | 'rear' | 'right';
-export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; voice: boolean; examHints: boolean; }
+export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; voice: boolean; examHints: boolean; cityMap: boolean; }
 export class DrivingEngine {
   readonly state = initialVehicle();
   readonly input: DriveInput = { throttle: 0, brake: 0, steer: 0 };
@@ -44,13 +49,17 @@ export class DrivingEngine {
   private lessonStep = 0;
   private lesson: Lesson = lessons[0];
   private simTime = 0;
+  private mapKind: MapKind = 'district';
+  private map: RoadMap = cityMap;
+  /** The exam city layout: pure data, built once; its 3D scene is rebuilt per exam. */
+  readonly city = buildCity();
   private judge = new TripJudge(cityMap);
   private traffic = new TrafficSystem(crossStreetLanes(cityMap));
   private trafficMeshes = new Map<number, THREE.Group>();
-  private citySigns = zoneSigns(cityMap.speedZones);
+  private staticSigns = zoneSigns(cityMap.speedZones);
   private examSignList: PlacedSign[] = [];
   private signWatch = new SignWatch();
-  private exam: ExamRunner | null = null;
+  private exam: ExamSession | null = null;
   private examProps: THREE.Object3D[] = [];
   private regulator: RegulatorFigure | null = null;
   private pedestrianMeshes: THREE.Group[] = [];
@@ -70,7 +79,7 @@ export class DrivingEngine {
   private turnAmount = 0;
   private mirrorElements: HTMLElement[] = [];
   private size = new THREE.Vector2();
-  private settings: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false };
+  private settings: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false, cityMap: false };
   paused = true;
   cameraMode: CameraMode = 'cockpit';
   look: Look = 'forward';
@@ -91,36 +100,57 @@ export class DrivingEngine {
   setLook(look: Look) { this.look = look; }
   setPaused(value: boolean) { this.paused = value; this.releaseInput(); this.accumulator = 0; }
   releaseInput() { this.keys.clear(); this.input.throttle = this.input.brake = this.input.steer = 0; this.pedalThrottle = this.pedalBrake = 0; }
-  reset(message = 'Автомобиль возвращён на старт') { this.endExam(); Object.assign(this.state, initialVehicle()); this.lessonStep = 0; this.complete = false; this.collisions = 0; this.cameraReady = false; this.look = 'forward'; this.simTime = 0; this.judge = new TripJudge(cityMap); this.traffic = new TrafficSystem(crossStreetLanes(cityMap)); this.violationsSent = -1; this.snapshots.clear(); this.signWatch.clear(); this.notify(message); }
-  /** Starts the inspector exam with the chosen situations from the usual start position. */
+  reset(message = 'Автомобиль возвращён на старт') { this.endExam(); Object.assign(this.state, initialVehicle()); this.lessonStep = 0; this.complete = false; this.collisions = 0; this.cameraReady = false; this.look = 'forward'; this.simTime = 0; this.judge = new TripJudge(this.map); this.traffic = this.newTraffic(); this.violationsSent = -1; this.snapshots.clear(); this.signWatch.clear(); this.notify(message); }
+  private newTraffic() { return this.mapKind === 'city' ? new TrafficSystem(cityLanes(this.city), cityTrafficLayout) : new TrafficSystem(crossStreetLanes(cityMap)); }
+  /** Swaps the 3D world and the road data. The city is rebuilt each time so staged signs can replace standing ones. */
+  private useMap(kind: MapKind, hiddenSigns = new Set<string>()) {
+    if (kind === 'district' && this.mapKind === 'district') return;
+    this.endExam();
+    this.trafficMeshes.forEach(disposeProp); this.trafficMeshes.clear();
+    disposeScene(this.world.scene);
+    this.world = kind === 'city' ? createCityWorld(this.city, hiddenSigns) : createWorld();
+    this.mapKind = kind; this.map = kind === 'city' ? this.city.map : cityMap;
+    this.staticSigns = kind === 'city' ? this.city.signs.filter(s => !hiddenSigns.has(s.id)) : zoneSigns(cityMap.speedZones);
+    this.cameraReady = false;
+  }
+  /** Starts the inspector exam in the city: the chosen situations are placed along a route from the start street. */
   startExam(selected: string[]) {
+    const runner = new CityExamRunner(this.city, selected);
+    this.useMap('city', new Set(runner.props().signs.map(s => s.id)));
     this.reset('Экзамен: слушайте команды инспектора');
-    this.stage(new ExamRunner(selected));
+    const p = runner.lanePoint(CITY_START, .5), a = this.city.nodes[CITY_START[0]], b = this.city.nodes[CITY_START[1]];
+    const heading = Math.atan2(b.x - a.x, -(b.z - a.z));
+    Object.assign(this.state, { x: p.x, z: p.z, heading });
+    this.lastHeading = heading; this.cameraReady = false;
+    this.stage(runner);
   }
   /** One practice situation: the car stands just before the place, belted, in D with the handbrake off. */
   startPractice(id: string) {
     const scene = practiceScenes[id]; if (!scene) return;
+    this.useMap('district');
     this.reset(`Практика: ${situations.find(s => s.id === id)?.title ?? ''}`);
     Object.assign(this.state, { x: scene.spawn.x, z: scene.spawn.z, heading: scene.spawn.heading, belt: true, gear: 'D', handbrake: false });
     this.lastHeading = scene.spawn.heading; this.cameraReady = false;
     this.stage(new ExamRunner([], id));
   }
-  private stage(exam: ExamRunner) {
-    const selected = exam.selected; this.exam = exam;
-    const scene = this.world.scene;
-    if (exam.tram) this.examProps.push(rails(scene, tramTrack.offset, tramTrack.start, tramTrack.end));
-    this.examSignList = examSigns(selected);
-    for (const sign of this.examSignList) this.examProps.push(roadSign(scene, sign.code, sign.at, sign.facing));
-    if (exam.stopSign) { const [a, b] = stopLineD; const line = new THREE.Mesh(new THREE.BoxGeometry(b.x - a.x, .02, .4), new THREE.MeshBasicMaterial({ color: '#f2eddb' })); line.position.set((a.x + b.x) / 2, .15, a.z); scene.add(line); this.examProps.push(line); }
-    if (exam.regulator) { this.regulator = regulatorFigure(scene); this.examProps.push(this.regulator.group); }
-    this.world.goal.position.set(exam.finish.x, .17, exam.finish.z);
+  private stage(exam: ExamSession) {
+    this.exam = exam;
+    const scene = this.world.scene, props = exam.props();
+    for (const lane of props.rails) this.examProps.push(rails(scene, lane.offset, lane.start, lane.end));
+    this.examSignList = props.signs;
+    for (const sign of props.signs) this.examProps.push(roadSign(scene, sign.code, sign.at, sign.facing));
+    for (const [a, b] of props.stopLines) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(Math.max(Math.abs(b.x - a.x), .4), .02, Math.max(Math.abs(b.z - a.z), .4)), new THREE.MeshBasicMaterial({ color: '#f2eddb' }));
+      line.position.set((a.x + b.x) / 2, .15, (a.z + b.z) / 2); scene.add(line); this.examProps.push(line);
+    }
+    if (props.regulator) { this.regulator = regulatorFigure(scene); this.regulator.group.position.set(props.regulator.x, 0, props.regulator.z); this.examProps.push(this.regulator.group); }
   }
   endExam() {
     this.examProps.forEach(disposeProp); this.examProps = []; this.regulator = null;
     this.pedestrianMeshes.forEach(disposeProp); this.pedestrianMeshes = [];
-    this.exam = null; this.examSignList = []; this.world.goal.position.set(this.lesson.goal.x, .17, this.lesson.goal.z);
+    this.exam = null; this.examSignList = []; this.world.goal.rotation.y = 0; this.world.goal.position.set(this.lesson.goal.x, .17, this.lesson.goal.z);
   }
-  setLesson(id: string) { const lesson = lessons.find(l => l.id === id); if (!lesson) return; this.lesson = lesson; this.world.goal.position.set(lesson.goal.x, .17, lesson.goal.z); this.reset(`Занятие: ${lesson.title}`); }
+  setLesson(id: string) { const lesson = lessons.find(l => l.id === id); if (!lesson) return; this.useMap('district'); this.lesson = lesson; this.world.goal.position.set(lesson.goal.x, .17, lesson.goal.z); this.reset(`Занятие: ${lesson.title}`); }
   gear(gear: Gear) { const error = selectGear(this.state, gear, Math.max(this.input.brake, this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0)); if (error) this.notify(error); }
   toggleBelt() { this.state.belt = !this.state.belt; }
   toggleHandbrake() { this.state.handbrake = !this.state.handbrake; }
@@ -162,31 +192,36 @@ export class DrivingEngine {
     this.updateCar(dt); this.updateTraffic(); this.updateCamera(dt);
     this.render(now);
     this.frames++; if (now - this.fpsAt >= 1000) { this.fps = Math.round(this.frames * 1000 / (now - this.fpsAt)); this.frames = 0; this.fpsAt = now; }
-    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.pedalThrottle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800 + this.pedalThrottle * 700, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonId: this.lesson.id, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: activeZone(cityMap, this.state)?.limit ?? null, collisions: this.collisions, violations: this.judge.violations.length === this.violationsSent ? this.judge.violations : [...this.judge.violations], signalAhead: this.signalAhead(), signs: this.signWatch.current().slice(0, 3).map(({ id, code, value }) => ({ id, code, value })), regulatorAhead: this.regulatorAhead(), tripTime: this.simTime, throttle: this.pedalThrottle, brake: this.pedalBrake, exam: this.exam ? { practice: this.exam.practice, selected: this.exam.selected, steps: this.exam.steps, stepIndex: this.exam.stepIndex, command: this.exam.step.command, finished: this.exam.finished, failReason: this.exam.failReason, progress: Object.fromEntries(this.exam.selected.map(id => [id, this.exam!.progress(id)])) } : null }); this.violationsSent = this.judge.violations.length; }
+    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.pedalThrottle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800 + this.pedalThrottle * 700, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonId: this.lesson.id, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: activeZone(this.map, this.state)?.limit ?? null, collisions: this.collisions, violations: this.judge.violations.length === this.violationsSent ? this.judge.violations : [...this.judge.violations], signalAhead: this.signalAhead(), signs: this.signWatch.current().slice(0, 3).map(({ id, code, value }) => ({ id, code, value })), regulatorAhead: this.regulatorAhead(), tripTime: this.simTime, throttle: this.pedalThrottle, brake: this.pedalBrake, exam: this.exam ? { practice: this.exam.practice, selected: this.exam.selected, steps: this.exam.steps, stepIndex: this.exam.stepIndex, command: this.exam.command, finished: this.exam.finished, failReason: this.exam.failReason, progress: Object.fromEntries(this.exam.selected.map(id => [id, this.exam!.progress(id)])), route: this.exam instanceof CityExamRunner ? [this.exam.current[0], ...this.exam.route().map(e => e[1])] : [], target: this.exam instanceof CityExamRunner ? this.exam.target?.node ?? this.exam.target?.edge?.[1] ?? null : null } : null, mapKind: this.mapKind, pose: { x: this.state.x, z: this.state.z, heading: this.state.heading } }); this.violationsSent = this.judge.violations.length; }
   };
   /** One fixed 1/60 s step: signals, traffic, the learner's car, the judge and the exam share the same simulation time. */
   private fixedStep(throttle: number, brake: number, steer: number, now: number) {
     const lamps = lampsAt(this.simTime);
     const prev = { x: this.state.x, z: this.state.z, heading: this.state.heading };
     const exam = this.exam;
-    // With the controller on duty the lights are off and he alone decides who may go (PDD 6.15).
-    const regulated = exam?.regulator ? (a: { dir: { x: number; z: number } }): Lamp => { const phase = regulatorAt(this.simTime); return allowedManeuvers(phase.pose, sideOf(phase.facing, a.dir)).includes('straight') ? 'green' : 'red'; } : undefined;
-    const forced = this.traffic.step(1 / 60, lamps, this.state, regulated);
-    const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles.concat(this.traffic.obstacles()));
+    // With the controller on duty the lights there are off and he alone decides who may go (PDD 6.15).
+    const ruled = (a: Approach) => !!exam?.controlledByRegulator(a);
+    const lampFor = (a: Approach): Lamp | null => ruled(a) || a.control === 'none' ? null : lamps[a.group];
+    const forTraffic = (a: Approach): Lamp | null => { if (!ruled(a)) return lampFor(a); const phase = regulatorAt(this.simTime); return allowedManeuvers(phase.pose, sideOf(phase.facing, a.dir)).includes('straight') ? 'green' : 'red'; };
+    const forced = this.traffic.step(1 / 60, lamps, this.state, forTraffic);
+    const hit = stepVehicle(this.state, { throttle, brake, steer: clamp(steer * this.settings.sensitivity, -1, 1) }, 1 / 60, this.world.obstacles.concat(this.traffic.obstacles()), this.mapKind === 'city' ? CITY_BOUNDS : districtBounds);
     const counted = hit && now - this.collisionAt > 1500;
     if (counted) { this.collisions++; this.collisionAt = now; }
     const before = this.judge.violations.length;
     // A finished exam keeps its log frozen: nothing done afterwards may change the result being reviewed.
-    if (!exam?.finished) this.judge.update(prev, this.state, this.simTime, exam?.regulator ? { ns: 'green', ew: 'green' } : lamps, counted);
+    if (!exam?.finished) this.judge.update(prev, this.state, this.simTime, lampFor, counted);
     if (exam) {
       this.judge.violations.slice(before).forEach(v => exam.attribute(v));
-      for (const phrase of exam.update({ prev, state: this.state, time: this.simTime, dt: 1 / 60, traffic: this.traffic, forced, judge: this.judge })) { if (phrase !== exam.step.command) this.notify(phrase); this.onSay(phrase); }
+      for (const phrase of exam.update({ prev, state: this.state, time: this.simTime, dt: 1 / 60, traffic: this.traffic, forced, judge: this.judge })) { if (phrase !== exam.command) this.notify(phrase); this.onSay(phrase); }
     }
     const found = this.judge.violations.slice(before);
     if (found.length) { this.notify(`${found[found.length - 1].title}${found[found.length - 1].rule ? ` · ${found[found.length - 1].rule}` : ''}`); found.forEach(v => this.captureSnapshot(v.id)); }
-    this.signWatch.update(this.examSignList.length ? this.citySigns.concat(this.examSignList) : this.citySigns, this.state, this.simTime);
+    this.signWatch.update(this.examSignList.length ? this.staticSigns.concat(this.examSignList) : this.staticSigns, this.state, this.simTime);
     this.simTime += 1 / 60;
-    if (this.exam) this.world.goal.visible = this.exam.step.kind === 'finish' && !this.exam.finished; else this.updateLesson();
+    if (this.exam) {
+      const goal = this.exam.goal(); this.world.goal.visible = !!goal;
+      if (goal) { this.world.goal.position.set(goal.x, .17, goal.z); this.world.goal.rotation.y = -(goal.heading ?? 0); }
+    } else this.updateLesson();
     if (this.state.signal && this.state.signal !== 'hazard') { this.turnAmount += this.state.heading - this.lastHeading; const matched = this.state.signal === 'right' ? this.turnAmount > .5 : this.turnAmount < -.5; if (matched && Math.abs(this.state.steer) < .08) { this.state.signal = null; this.turnAmount = 0; } }
     this.lastHeading = this.state.heading;
   }
@@ -199,12 +234,12 @@ export class DrivingEngine {
   }
   /** The controller as seen from the approach the car is driving up to: pose, side and what it permits. */
   private regulatorAhead() {
-    if (!this.exam?.regulator) return null;
-    const ahead = approachAhead(cityMap, this.state, 80); if (!ahead || ahead.approach.intersection !== 'central') return null;
+    if (!this.exam) return null;
+    const ahead = approachAhead(this.map, this.state, 80); if (!ahead || !this.exam.controlledByRegulator(ahead.approach)) return null;
     const phase = regulatorAt(this.simTime), side = sideOf(phase.facing, ahead.approach.dir);
     return { pose: phase.pose, side, allowed: allowedManeuvers(phase.pose, side), distance: ahead.distance };
   }
-  private signalAhead() { const ahead = this.exam?.regulator ? null : approachAhead(cityMap, this.state); return ahead ? { lamp: lampsAt(this.simTime)[ahead.approach.group], distance: ahead.distance } : null; }
+  private signalAhead() { const ahead = approachAhead(this.map, this.state, 70, true); return ahead && !this.exam?.controlledByRegulator(ahead.approach) ? { lamp: lampsAt(this.simTime)[ahead.approach.group], distance: ahead.distance } : null; }
   private updateLesson() {
     const steps = this.lesson.steps.length;
     const next = this.lesson.next(this.lessonStep, this.state, { passedLegally: this.judge.passedLegally });
@@ -224,13 +259,13 @@ export class DrivingEngine {
     const alive = new Set<number>();
     for (const car of this.traffic.cars) { const p = carPosition(car), mesh = this.meshFor(car); mesh.position.set(p.x, 0, p.z); mesh.rotation.y = -p.heading; alive.add(car.id); }
     for (const [id, mesh] of this.trafficMeshes) if (!alive.has(id)) { disposeProp(mesh); this.trafficMeshes.delete(id); }
-    const lamps = lampsAt(this.simTime), dark = !!this.exam?.regulator;
-    for (const head of this.world.signals) paintSignal(head, dark ? 'off' : lamps[head.group], this.simTime);
+    const lamps = lampsAt(this.simTime);
+    for (const head of this.world.signals) paintSignal(head, this.exam?.controlledByRegulator(head.approach) ? 'off' : lamps[head.group], this.simTime);
     if (this.regulator) { const phase = regulatorAt(this.simTime); this.regulator.setPose(phase.pose, phase.facing); }
     const people = this.exam?.pedestrians ?? [];
     while (this.pedestrianMeshes.length < people.length) this.pedestrianMeshes.push(pedestrianFigure(this.world.scene, ['#c0614c', '#4f78a0'][this.pedestrianMeshes.length % 2]));
     while (this.pedestrianMeshes.length > people.length) disposeProp(this.pedestrianMeshes.pop()!);
-    people.forEach((p, i) => { const m = this.pedestrianMeshes[i]; m.position.set(p.x, p.waiting ? 0 : Math.abs(Math.sin(this.simTime * 7 + i)) * .04, p.z); m.rotation.y = p.dir > 0 ? -Math.PI / 2 : Math.PI / 2; });
+    people.forEach((p, i) => { const m = this.pedestrianMeshes[i]; m.position.set(p.x, p.waiting ? 0 : Math.abs(Math.sin(this.simTime * 7 + i)) * .04, p.z); m.rotation.y = p.axis === 'z' ? (p.dir > 0 ? Math.PI : 0) : p.dir > 0 ? -Math.PI / 2 : Math.PI / 2; });
   }
   /** Renders a heading-up top view around the car into a small JPEG. */
   private captureSnapshot(id: number) {
@@ -290,5 +325,13 @@ export class DrivingEngine {
     });
     renderer.setScissorTest(false); renderer.setViewport(0, 0, this.size.x, this.size.y);
   }
-  dispose() { this.disposed = true; cancelAnimationFrame(this.frame); window.removeEventListener('resize', this.resize); window.removeEventListener('keydown', this.keyDown); window.removeEventListener('keyup', this.keyUp); window.removeEventListener('blur', this.blur); document.removeEventListener('visibilitychange', this.visibility); const geometries = new Set<THREE.BufferGeometry>(); const mats = new Set<THREE.Material>(); this.world.scene.traverse(o => { if (o instanceof THREE.Mesh) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => { if ('map' in m && m.map instanceof THREE.Texture) m.map.dispose(); m.dispose(); }); this.targets.forEach(t => t.dispose()); this.snapshotTarget.dispose(); this.overlayQuad.geometry.dispose(); this.overlayQuad.material.dispose(); this.renderer.dispose(); this.renderer.domElement.remove(); }
+  dispose() { this.disposed = true; cancelAnimationFrame(this.frame); window.removeEventListener('resize', this.resize); window.removeEventListener('keydown', this.keyDown); window.removeEventListener('keyup', this.keyUp); window.removeEventListener('blur', this.blur); document.removeEventListener('visibilitychange', this.visibility); disposeScene(this.world.scene); this.targets.forEach(t => t.dispose()); this.snapshotTarget.dispose(); this.overlayQuad.geometry.dispose(); this.overlayQuad.material.dispose(); this.renderer.dispose(); this.renderer.domElement.remove(); }
+}
+
+/** Frees every geometry, material and texture of a scene that is being replaced. */
+function disposeScene(scene: THREE.Scene) {
+  const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>();
+  scene.traverse(o => { if (o instanceof THREE.Mesh) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); } });
+  geometries.forEach(g => g.dispose());
+  mats.forEach(m => { if ('map' in m && m.map instanceof THREE.Texture) m.map.dispose(); m.dispose(); });
 }

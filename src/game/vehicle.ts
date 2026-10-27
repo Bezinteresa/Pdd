@@ -21,7 +21,10 @@ export function overlapsCar(state: Pick<VehicleState, 'x' | 'z' | 'heading'>, bo
     Math.abs(dx * c + dz * s) < width + box.halfX * Math.abs(c) + box.halfZ * Math.abs(s) &&
     Math.abs(dx * s - dz * c) < length + box.halfX * Math.abs(s) + box.halfZ * Math.abs(c);
 }
-export function stepVehicle(state: VehicleState, input: DriveInput, dt: number, obstacles: Obstacle[]): boolean {
+/** Edges of the drivable world; beyond them the car stops as at a wall. */
+export interface WorldBounds { minX: number; maxX: number; minZ: number; maxZ: number; }
+export const districtBounds: WorldBounds = { minX: -145, maxX: 145, minZ: -145, maxZ: 149 };
+export function stepVehicle(state: VehicleState, input: DriveInput, dt: number, obstacles: Obstacle[], bounds: WorldBounds = districtBounds): boolean {
   const previousSpeed = state.speed;
   const steeringTarget = clamp(input.steer, -1, 1);
   state.steer += (steeringTarget - state.steer) * (1 - Math.exp(-9 * dt));
@@ -37,10 +40,11 @@ export function stepVehicle(state: VehicleState, input: DriveInput, dt: number, 
     state.speed = Math.sign(state.speed) * Math.max(0, Math.abs(state.speed) - slowdown);
     state.speed = clamp(state.speed, -5.5, 22);
   }
-  const wheelAngle = state.steer * (0.53 / (1 + Math.abs(state.speed) * 0.055));
+  // Up to ~34° at the wheels when slow: a turning circle of about 8 m, enough to turn back on a 16 m street.
+  const wheelAngle = state.steer * (0.6 / (1 + Math.abs(state.speed) * 0.055));
   const newHeading = state.heading + state.speed / 2.65 * Math.tan(wheelAngle) * dt;
   const next = { x: state.x + Math.sin(newHeading) * state.speed * dt, z: state.z - Math.cos(newHeading) * state.speed * dt, heading: newHeading };
-  const hit = Math.abs(next.x) > 145 || next.z < -145 || next.z > 149 || obstacles.some(o => overlapsCar(next, o));
+  const hit = next.x < bounds.minX || next.x > bounds.maxX || next.z < bounds.minZ || next.z > bounds.maxZ || obstacles.some(o => overlapsCar(next, o));
   if (hit) state.speed = 0;
   else { state.x = next.x; state.z = next.z; state.heading = newHeading; state.distance += Math.abs(state.speed) * dt; }
   state.acceleration = clamp((state.speed - previousSpeed) / dt, -10, 6);

@@ -12,6 +12,8 @@ export interface Approach {
   stopLine: [Point, Point];
   /** Traffic light heads facing this approach. */
   heads: Point[];
+  /** How the approach is controlled; 'none' marks an unregulated approach (no lights to judge). Default: signal. */
+  control?: 'signal' | 'none';
 }
 export interface Intersection { id: string; area: Rect; }
 export interface SpeedZone { id: string; area: Rect; dir: Point; limit: number; signAt: Point; }
@@ -60,12 +62,12 @@ function lateralOutside(approach: Approach, p: Point) {
 }
 
 /** The approach the car is driving up to, used for the HUD hint. */
-export function approachAhead(map: RoadMap, pose: Point & { heading: number }, range = 70): { approach: Approach; distance: number } | null {
+export function approachAhead(map: RoadMap, pose: Point & { heading: number }, range = 70, signalOnly = false): { approach: Approach; distance: number } | null {
   const f = forwardOf(pose.heading);
   const front = { x: pose.x + f.x * 2.05, z: pose.z + f.z * 2.05 };
   let best: { approach: Approach; distance: number } | null = null;
   for (const approach of map.approaches) {
-    if (dot(approach.dir, f) < .7 || lateralOutside(approach, front) > 1) continue;
+    if ((signalOnly && approach.control === 'none') || dot(approach.dir, f) < .7 || lateralOutside(approach, front) > 1) continue;
     const distance = distanceToStopLine(approach, front);
     if (distance < -1 || distance > range) continue;
     if (!best || distance < best.distance) best = { approach, distance };
@@ -78,8 +80,10 @@ export type Turn = 'straight' | 'right' | 'left' | 'uturn';
  * Manoeuvre through an intersection judged by the edge the car leaves through, relative to the entry direction.
  * Headings alone misjudge tight turns: the car often leaves the box before it has finished turning.
  */
-export function maneuverThrough(area: Rect, entryHeading: number, exit: Point): Turn {
-  const entry = forwardOf(entryHeading), entryDir = Math.abs(entry.x) > Math.abs(entry.z) ? { x: Math.sign(entry.x), z: 0 } : { x: 0, z: Math.sign(entry.z) };
+export function maneuverThrough(area: Rect, entryHeading: number, exit: Point, entryPoint?: Point): Turn {
+  // Prefer the side the car came in by: a driver who starts turning early enters the box at an angle.
+  const entry = entryPoint ? { x: (area.x - entryPoint.x) / area.halfX, z: (area.z - entryPoint.z) / area.halfZ } : forwardOf(entryHeading);
+  const entryDir = Math.abs(entry.x) > Math.abs(entry.z) ? { x: Math.sign(entry.x), z: 0 } : { x: 0, z: Math.sign(entry.z) };
   const dx = (exit.x - area.x) / area.halfX, dz = (exit.z - area.z) / area.halfZ;
   const out = Math.abs(dx) > Math.abs(dz) ? { x: Math.sign(dx), z: 0 } : { x: 0, z: Math.sign(dz) };
   const along = entryDir.x * out.x + entryDir.z * out.z;
@@ -111,7 +115,7 @@ export function validateMap(map: RoadMap): string[] {
     }
     // Seen from the intersection centre, the stop line must lie behind the direction of travel.
     if (distanceToStopLine(approach, crossing.area) >= 0) errors.push(`${approach.id}: стоп-линия за перекрёстком`);
-    if (approach.heads.length === 0) errors.push(`${approach.id}: нет светофора`);
+    if (approach.control !== 'none' && approach.heads.length === 0) errors.push(`${approach.id}: нет светофора`);
   }
   for (const zone of map.speedZones) if (!onRoad(map, zone.area)) errors.push(`${zone.id}: зона вне дороги`);
   return errors;

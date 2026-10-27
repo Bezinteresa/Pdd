@@ -1,4 +1,4 @@
-import { cityMap, forwardOf, inside, maneuverThrough, type Point, type Rect } from './roads.ts';
+import { cityMap, forwardOf, inside, maneuverThrough, type Approach, type Point, type Rect } from './roads.ts';
 import type { VehicleState } from './vehicle.ts';
 import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
 import { laneFromApproach, type ForcedBrake, type TrafficLane, type TrafficSystem } from './traffic.ts';
@@ -160,7 +160,31 @@ export function situationOutcome(progress: SituationProgress, errors: number): S
   return progress === 'active' ? 'interrupted' : 'not-reached';
 }
 
-export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; }
+/** A pedestrian shuttling along a crosswalk: it walks along x or z between `min` and `max`. */
+export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; axis?: 'x' | 'z'; min?: number; max?: number; }
+
+/** What a running exam puts on the map besides the road: signs, stop lines, tracks and the controller. */
+export interface StagedProps { signs: PlacedSign[]; stopLines: [Point, Point][]; rails: TrafficLane[]; regulator: Point | null; }
+/** The exam or practice run as the engine and the UI see it, whatever the map. */
+export interface ExamSession {
+  readonly selected: string[];
+  readonly practice: string | null;
+  readonly steps: RouteStep[];
+  readonly stepIndex: number;
+  readonly finished: boolean;
+  readonly failReason: string | null;
+  readonly pedestrians: Pedestrian[];
+  /** What the inspector says now. */
+  readonly command: string;
+  progress(id: string): SituationProgress;
+  attribute(v: Violation): void;
+  props(): StagedProps;
+  /** Approaches the controller rules instead of the lights. */
+  controlledByRegulator(approach: Approach): boolean;
+  /** Where to stop at the end, once that is the task. */
+  goal(): (Point & { heading?: number }) | null;
+  update(frame: ExamFrame): string[];
+}
 const CROSSWALK_Z = 15, CROSSWALK_HALF = 8.5;
 const FRONT_OFFSET = 2.05;
 /** Game tolerances for sign 2.5, not legal distances: how close to the line the front must stand, and what counts as stopped. */
@@ -168,7 +192,7 @@ export const STOP_ZONE = 3, STOP_SPEED = .1;
 
 export interface ExamFrame { prev: Pose; state: VehicleState; time: number; dt: number; traffic: TrafficSystem; forced: ForcedBrake[]; judge: TripJudge; }
 
-export class ExamRunner {
+export class ExamRunner implements ExamSession {
   readonly steps: RouteStep[];
   readonly regulator: boolean;
   readonly stopSign: boolean;
@@ -206,6 +230,12 @@ export class ExamRunner {
   }
 
   get step() { return this.steps[Math.min(this.stepIndex, this.steps.length - 1)]; }
+  get command() { return this.step.command; }
+  props(): StagedProps {
+    return { signs: examSigns(this.selected), stopLines: this.stopSign ? [stopLineD] : [], rails: this.tram ? [tramTrack] : [], regulator: this.regulator ? { x: 0, z: 0 } : null };
+  }
+  controlledByRegulator(approach: Approach) { return this.regulator && approach.intersection === 'central'; }
+  goal() { return this.step.kind === 'finish' && !this.finished ? this.finish : null; }
   /** Selected situation staged at the current step, used to attribute violations in the debrief. */
   currentSituation(): string | undefined {
     const slot = this.step.slot; if (!slot) return undefined;

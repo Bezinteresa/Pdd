@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Obstacle } from './vehicle';
-import { cityMap, type Approach } from './roads';
+import { cityMap, type Approach, type RoadMap } from './roads';
 import type { Lamp, SignalGroup } from './signals';
 import type { Pose } from './regulator';
 import type { Point } from './roads';
 
-export interface SignalHead { group: SignalGroup; red: THREE.MeshBasicMaterial; yellow: THREE.MeshBasicMaterial; green: THREE.MeshBasicMaterial; }
+export interface SignalHead { group: SignalGroup; approach: Approach; red: THREE.MeshBasicMaterial; yellow: THREE.MeshBasicMaterial; green: THREE.MeshBasicMaterial; }
 export interface World { scene: THREE.Scene; obstacles: Obstacle[]; car: THREE.Group; shell: THREE.Group; wheel: THREE.Group; tires: THREE.Group[]; frontTires: THREE.Group[]; goal: THREE.Group; signals: SignalHead[]; }
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 function material(color: string) { if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9 })); return materials.get(color)!; }
@@ -20,7 +20,7 @@ function textTexture(text: string, bg: string, fg: string, width = 512, height =
 function board(parent: THREE.Object3D, text: string, x: number, y: number, z: number, width: number, height: number, bg: string, fg: string) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: textTexture(text, bg, fg), side: THREE.DoubleSide })); m.position.set(x, y, z); parent.add(m); return m;
 }
-function tree(scene: THREE.Scene, x: number, z: number, size = 1) {
+export function tree(scene: THREE.Scene, x: number, z: number, size = 1) {
   box(scene, .35 * size, 2.2 * size, .35 * size, x, 1.1 * size, z, '#866d50');
   const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.65 * size, 0), material('#638977')); foliage.scale.y = 1.45; foliage.position.set(x, 3.1 * size, z); foliage.castShadow = true; scene.add(foliage);
 }
@@ -41,57 +41,51 @@ function parkedCar(scene: THREE.Scene, x: number, z: number, color: string, obst
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .5, .62, sx * .86, .35, sz * 1.2, '#263431');
   obstacles.push({ x, z, halfX: .95, halfZ: 2 });
 }
-export function createWorld(): World {
-  const scene = new THREE.Scene(); scene.background = new THREE.Color('#c7d9d3'); scene.fog = new THREE.Fog('#c7d9d3', 75, 240);
+type LampSlot = { approach: Approach; x: number; z: number; rotation: number };
+
+/** Sky, fog and lights shared by every map. */
+export function newScene(fogFar = 240) {
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#c7d9d3'); scene.fog = new THREE.Fog('#c7d9d3', 75, fogFar);
   scene.add(new THREE.HemisphereLight('#f0f8f7', '#7f8974', 2.6));
   const sun = new THREE.DirectionalLight('#fff1d5', 3.1); sun.position.set(-45, 75, 45); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.camera.left = -90; sun.shadow.camera.right = 90; sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90; sun.shadow.camera.far = 180; sun.shadow.bias = -.001; scene.add(sun);
-  const obstacles: Obstacle[] = [];
-  box(scene, 700, .3, 700, 0, -.25, 0, '#9bad91');
-  const road = (x: number, z: number, w: number, d: number) => { box(scene, w + 3, .18, d + 3, x, -.05, z, '#c0c5b5'); box(scene, w, .12, d, x, .06, z, '#596760'); };
-  road(0, 10, 18, 276); road(0, 0, 254, 18); road(-70, -40, 16, 106); road(70, -40, 16, 106); road(0, -85, 156, 16);
-  road(0, 105, 126, 58);
-  for (let z = -125; z < 145; z += 9) if (Math.abs(z) > 14 && (z < 74 || z > 137)) box(scene, .16, .015, 4.2, 0, .14, z, '#e8dfbe');
-  for (let x = -121; x < 125; x += 9) if (Math.abs(x) > 14 && Math.abs(Math.abs(x) - 70) > 12) box(scene, 4.2, .015, .16, x, .14, 0, '#e8dfbe');
-  for (let z = -75; z < 0; z += 9) for (const x of [-70, 70]) box(scene, .15, .015, 4, x, .14, z, '#ece4ca');
-  for (let x = -60; x <= 60; x += 9) if (Math.abs(x) > 12) box(scene, 4.2, .015, .15, x, .14, -85, '#ece4ca');
-  // Crosswalks, stop lines and signal poles come from the same map data the judge uses.
-  for (const c of cityMap.crosswalks) {
+  return scene;
+}
+/** Crosswalk stripes and stop lines of signalised approaches, from the map data the judge uses. */
+export function markings(scene: THREE.Scene, map: RoadMap) {
+  for (const c of map.crosswalks) {
     const alongX = c.halfX > c.halfZ, half = alongX ? c.halfX : c.halfZ;
     for (let t = -half + 1; t < half; t += 2) box(scene, alongX ? 1.1 : c.halfX * 2, .025, alongX ? c.halfZ * 2 : 1.1, alongX ? c.x + t : c.x, .16, alongX ? c.z : c.z + t, '#f2eddb');
   }
-  for (const a of cityMap.approaches) { const [p, q] = a.stopLine; box(scene, Math.max(Math.abs(q.x - p.x), .4), .02, Math.max(Math.abs(q.z - p.z), .4), (p.x + q.x) / 2, .15, (p.z + q.z) / 2, '#f2eddb'); }
-  const lampSlots: { approach: Approach; x: number; z: number; rotation: number }[] = [];
-  for (const a of cityMap.approaches) for (const h of a.heads) {
+  for (const a of map.approaches) if (a.control !== 'none') { const [p, q] = a.stopLine; box(scene, Math.max(Math.abs(q.x - p.x), .4), .02, Math.max(Math.abs(q.z - p.z), .4), (p.x + q.x) / 2, .15, (p.z + q.z) / 2, '#f2eddb'); }
+}
+/** Poles and housings of the traffic lights; the lamps themselves are added after batching. */
+export function signalPoles(scene: THREE.Scene, map: RoadMap, obstacles: Obstacle[]): LampSlot[] {
+  const slots: LampSlot[] = [];
+  for (const a of map.approaches) for (const h of a.heads) {
     // Heads face oncoming traffic of their approach.
     const rotation = Math.atan2(-a.dir.x, -a.dir.z);
     box(scene, .13, 3.9, .13, h.x, 1.95, h.z, '#63756d');
     const housing = box(scene, .52, 1.5, .45, h.x, 3.5, h.z, '#2c3d34'); housing.rotation.y = rotation;
-    lampSlots.push({ approach: a, x: h.x, z: h.z, rotation });
+    slots.push({ approach: a, x: h.x, z: h.z, rotation });
     obstacles.push({ x: h.x, z: h.z, halfX: .12, halfZ: .12 });
   }
-  for (let i = 0; i < 6; i++) { const x = -48 + i * 5; box(scene, .1, .02, 8, x, .14, 106, '#e5e3d1'); }
-  box(scene, 25, .02, .1, -35.5, .14, 102, '#e5e3d1');
-  parkedCar(scene, -45.5, 106, '#c4b77c', obstacles); parkedCar(scene, -35.5, 106, '#71939b', obstacles); parkedCar(scene, -25.5, 106, '#e6d9bc', obstacles);
-  for (let z = 90; z <= 125; z += 7) { cone(scene, 20, z); cone(scene, 36, z); }
-  for (let z = 87; z <= 125; z += 9.5) cone(scene, 28 + Math.sin(z) * 3.5, z);
-  for (const x of [-58, 58]) for (let z = 85; z <= 128; z += 12) { tree(scene, x, z, 1.1); obstacles.push({ x, z, halfX: .4, halfZ: .4 }); }
-  const blocks = [ [-39, -40, 42, 52], [39, -40, 42, 52], [-105, -40, 32, 50], [105, -40, 32, 50], [-39, 40, 42, 45], [39, 40, 42, 45] ];
+  return slots;
+}
+/** Four houses with windows on a lot (centre, width, depth); each house is an obstacle. Returns the colour counter. */
+export function houses(scene: THREE.Scene, lot: { x: number; z: number; w: number; d: number }, obstacles: Obstacle[], seed: number) {
   const colors = ['#d9d4bb', '#c9c7ae', '#e5d9c5', '#c8cbb9'];
-  let count = 0;
-  for (const [cx, cz, bw, bd] of blocks) {
-    box(scene, bw, .25, bd, cx, .05, cz, '#b8bea9');
-    for (const dx of [-1, 1]) for (const dz of [-1, 1]) {
-      const x = cx + dx * bw * .23, z = cz + dz * bd * .23, w = bw * .38, d = bd * .37, h = 7 + (count * 7 % 11); count++;
-      box(scene, w, h, d, x, h / 2 + .25, z, colors[count % colors.length]); box(scene, w + .35, .45, d + .35, x, h + .4, z, '#798879');
-      for (let y = 2.7; y < h; y += 2.8) for (let wx = -w / 2 + 2; wx < w / 2 - .5; wx += 3.3) { box(scene, 1.5, 1.3, .06, x + wx, y, z + d / 2 + .04, '#698782'); box(scene, 1.5, 1.3, .06, x + wx, y, z - d / 2 - .04, '#698782'); }
-      obstacles.push({ x, z, halfX: w / 2, halfZ: d / 2 });
-    }
+  let count = seed;
+  box(scene, lot.w, .25, lot.d, lot.x, .05, lot.z, '#b8bea9');
+  for (const dx of [-1, 1]) for (const dz of [-1, 1]) {
+    const x = lot.x + dx * lot.w * .23, z = lot.z + dz * lot.d * .23, w = lot.w * .38, d = lot.d * .37, h = 7 + (count * 7 % 11); count++;
+    box(scene, w, h, d, x, h / 2 + .25, z, colors[count % colors.length]); box(scene, w + .35, .45, d + .35, x, h + .4, z, '#798879');
+    for (let y = 2.7; y < h; y += 2.8) for (let wx = -w / 2 + 2; wx < w / 2 - .5; wx += 3.3) { box(scene, 1.5, 1.3, .06, x + wx, y, z + d / 2 + .04, '#698782'); box(scene, 1.5, 1.3, .06, x + wx, y, z - d / 2 - .04, '#698782'); }
+    obstacles.push({ x, z, halfX: w / 2, halfZ: d / 2 });
   }
-  for (let z = -120; z <= 60; z += 19) for (const x of [-13, 13]) tree(scene, x, z, .8);
-  for (const x of [-10, 10]) { box(scene, .16, 5.5, .16, x, 2.75, 78, '#687e73'); box(scene, 3, .15, .25, x - Math.sign(x) * 1.3, 5.5, 78, '#687e73'); }
-  box(scene, .2, 4.8, .2, -8, 2.4, 91, '#617367'); box(scene, .2, 4.8, .2, 8, 2.4, 91, '#617367');
-  board(scene, 'АВТОШКОЛА', 0, 4.7, 91, 16, 1.8, '#244a3e', '#f2eddc');
-  for (const zone of cityMap.speedZones) speedSign(scene, zone.signAt.x, zone.signAt.z, String(zone.limit));
+  return count;
+}
+/** Merges static primitives by material, then adds the lamps, the goal zone and the learner's car. */
+export function finishWorld(scene: THREE.Scene, obstacles: Obstacle[], slots: LampSlot[], goalAt: Point): World {
   // Batch static primitives by material so windows and trees do not each cost a draw call.
   scene.updateMatrixWorld(true);
   const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
@@ -102,13 +96,13 @@ export function createWorld(): World {
   // Lamps are added after batching: each head owns materials that change with the signal phase.
   const signals: SignalHead[] = [];
   const lampGeometry = new THREE.CircleGeometry(.17, 16);
-  for (const slot of lampSlots) {
-    const head: SignalHead = { group: slot.approach.group, red: new THREE.MeshBasicMaterial({ color: '#4a3a36' }), yellow: new THREE.MeshBasicMaterial({ color: '#4a4636' }), green: new THREE.MeshBasicMaterial({ color: '#36463a' }) };
+  for (const slot of slots) {
+    const head: SignalHead = { group: slot.approach.group, approach: slot.approach, red: new THREE.MeshBasicMaterial({ color: '#4a3a36' }), yellow: new THREE.MeshBasicMaterial({ color: '#4a4636' }), green: new THREE.MeshBasicMaterial({ color: '#36463a' }) };
     const face = new THREE.Group(); face.position.set(slot.x, 0, slot.z); face.rotation.y = slot.rotation; scene.add(face);
     [head.red, head.yellow, head.green].forEach((m, i) => { const l = new THREE.Mesh(lampGeometry, m); l.position.set(0, 3.97 - i * .47, .235); face.add(l); });
     signals.push(head);
   }
-  const goal = new THREE.Group(); goal.position.set(4, .17, 69); goal.visible = false; scene.add(goal);
+  const goal = new THREE.Group(); goal.position.set(goalAt.x, .17, goalAt.z); goal.visible = false; scene.add(goal);
   const mark = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 7), new THREE.MeshBasicMaterial({ color: '#b3df9a', transparent: true, opacity: .32, side: THREE.DoubleSide })); mark.rotation.x = -Math.PI / 2; goal.add(mark);
   for (const x of [-1.9, 1.9]) box(goal, .12, .025, 7, x, .02, 0, '#bdeaa4');
   for (const z of [-3.5, 3.5]) box(goal, 3.8, .025, .12, 0, .02, z, '#bdeaa4');
@@ -133,6 +127,38 @@ export function createWorld(): World {
     tires.push(tire); if (z < 0) frontTires.push(pivot);
   }
   return { scene, obstacles, car, shell, wheel, tires, frontTires, goal, signals };
+}
+
+/** The training district: driving school ground, the signalised crossing and the loop used by lessons and practice. */
+export function createWorld(): World {
+  const scene = newScene();
+  const obstacles: Obstacle[] = [];
+  box(scene, 700, .3, 700, 0, -.25, 0, '#9bad91');
+  const road = (x: number, z: number, w: number, d: number) => { box(scene, w + 3, .18, d + 3, x, -.05, z, '#c0c5b5'); box(scene, w, .12, d, x, .06, z, '#596760'); };
+  road(0, 10, 18, 276); road(0, 0, 254, 18); road(-70, -40, 16, 106); road(70, -40, 16, 106); road(0, -85, 156, 16);
+  road(0, 105, 126, 58);
+  for (let z = -125; z < 145; z += 9) if (Math.abs(z) > 14 && (z < 74 || z > 137)) box(scene, .16, .015, 4.2, 0, .14, z, '#e8dfbe');
+  for (let x = -121; x < 125; x += 9) if (Math.abs(x) > 14 && Math.abs(Math.abs(x) - 70) > 12) box(scene, 4.2, .015, .16, x, .14, 0, '#e8dfbe');
+  for (let z = -75; z < 0; z += 9) for (const x of [-70, 70]) box(scene, .15, .015, 4, x, .14, z, '#ece4ca');
+  for (let x = -60; x <= 60; x += 9) if (Math.abs(x) > 12) box(scene, 4.2, .015, .15, x, .14, -85, '#ece4ca');
+  // Crosswalks, stop lines and signal poles come from the same map data the judge uses.
+  markings(scene, cityMap);
+  const lampSlots = signalPoles(scene, cityMap, obstacles);
+  for (let i = 0; i < 6; i++) { const x = -48 + i * 5; box(scene, .1, .02, 8, x, .14, 106, '#e5e3d1'); }
+  box(scene, 25, .02, .1, -35.5, .14, 102, '#e5e3d1');
+  parkedCar(scene, -45.5, 106, '#c4b77c', obstacles); parkedCar(scene, -35.5, 106, '#71939b', obstacles); parkedCar(scene, -25.5, 106, '#e6d9bc', obstacles);
+  for (let z = 90; z <= 125; z += 7) { cone(scene, 20, z); cone(scene, 36, z); }
+  for (let z = 87; z <= 125; z += 9.5) cone(scene, 28 + Math.sin(z) * 3.5, z);
+  for (const x of [-58, 58]) for (let z = 85; z <= 128; z += 12) { tree(scene, x, z, 1.1); obstacles.push({ x, z, halfX: .4, halfZ: .4 }); }
+  const blocks = [ [-39, -40, 42, 52], [39, -40, 42, 52], [-105, -40, 32, 50], [105, -40, 32, 50], [-39, 40, 42, 45], [39, 40, 42, 45] ];
+  let count = 0;
+  for (const [x, z, w, d] of blocks) count = houses(scene, { x, z, w, d }, obstacles, count);
+  for (let z = -120; z <= 60; z += 19) for (const x of [-13, 13]) tree(scene, x, z, .8);
+  for (const x of [-10, 10]) { box(scene, .16, 5.5, .16, x, 2.75, 78, '#687e73'); box(scene, 3, .15, .25, x - Math.sign(x) * 1.3, 5.5, 78, '#687e73'); }
+  box(scene, .2, 4.8, .2, -8, 2.4, 91, '#617367'); box(scene, .2, 4.8, .2, 8, 2.4, 91, '#617367');
+  board(scene, 'АВТОШКОЛА', 0, 4.7, 91, 16, 1.8, '#244a3e', '#f2eddc');
+  for (const zone of cityMap.speedZones) speedSign(scene, zone.signAt.x, zone.signAt.z, String(zone.limit));
+  return finishWorld(scene, obstacles, lampSlots, { x: 4, z: 69 });
 }
 
 const lampColors = { red: ['#ff5a45', '#4a3a36'], yellow: ['#ffd04a', '#4a4636'], green: ['#8dff7a', '#36463a'] } as const;

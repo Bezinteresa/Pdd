@@ -1,6 +1,11 @@
 <script setup lang="ts">
 defineProps<{ name: string; size?: number }>();
 const paths: Record<string, string> = {
+  star: 'm12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9Z',
+  search: 'M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Zm5-2 5 5',
+  clock: 'M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  ticket: 'M4 5h16v4a3 3 0 0 0 0 6v4H4v-4a3 3 0 0 0 0-6ZM10 9h4m-4 3h4m-4 3h4',
+  sign: 'M12 2 22 12 12 22 2 12ZM12 22v0',
   drive: 'M4 16V9l2-5h12l2 5v7M4 10h16M7 14h2m6 0h2M5 16v3m14-3v3M9 5l-1 5m7-5 1 5',
   book: 'M12 5v15M3 4h5a4 4 0 0 1 4 3 4 4 0 0 1 4-3h5v15h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3Z',
   chart: 'M4 20h17M7 16v-5m6 5V5m6 11V9',

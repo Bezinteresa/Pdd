@@ -301,3 +301,131 @@ body{background:#fbf5ea}
 .debrief h2.verdict-ok{animation:verdict-pop .5s cubic-bezier(.3,1.6,.5,1)}
 @keyframes verdict-pop{0%{transform:scale(.6);opacity:0}100%{transform:none;opacity:1}}
 @media(prefers-reduced-motion:reduce){.celebrate{display:none}}
+/* ===== 0.8 «Билеты» и «Правила» ===== */
+.tickets-loading{padding:60px 0;text-align:center;color:var(--muted);font-size:15px}
+.tickets-page,.rules-page{font-size:15px}
+.secondary-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px 16px;min-height:40px;border-radius:14px;background:var(--paper);border:2px solid var(--line);color:var(--ink);font-size:13px;font-weight:600}
+.secondary-button:disabled{opacity:.45}
+.source-note{margin-top:26px;font-size:12px;color:var(--muted);line-height:1.6}
+.rule-link{display:inline;background:none;border:0;padding:0 2px;color:var(--coral-deep);font:inherit;font-weight:650;text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.rule-links{display:flex;gap:16px;flex-wrap:wrap}
+.ticket-actions{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:14px;margin:22px 0}
+.ticket-action{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;align-items:center;text-align:left;padding:16px 18px;border-radius:18px;background:var(--paper);border:2px solid var(--line);color:var(--ink);box-shadow:0 4px 0 var(--line)}
+.ticket-action svg{grid-row:span 2;color:var(--coral-deep)}
+.ticket-action strong{font-size:17px}
+.ticket-action span{font-size:12.5px;color:var(--muted)}
+.ticket-action.primary{background:var(--coral);border-color:var(--coral);color:#fffaf2;box-shadow:0 4px 0 var(--coral-deep)}
+.ticket-action.primary svg,.ticket-action.primary span{color:#fffaf2}
+.ticket-action:disabled{opacity:.5;box-shadow:none}
+.ticket-action:not(:disabled):active{transform:translateY(3px);box-shadow:0 1px 0 var(--coral-deep)}
+.ticket-section h2{font-size:19px;margin:26px 0 12px}
+.ticket-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:8px}
+.ticket-grid button{height:48px;border-radius:12px;background:var(--paper);border:2px solid var(--line);color:var(--ink);font-size:16px;font-weight:650}
+.ticket-grid button.partial{border-color:#f5c98f;background:#fff4e1}
+.ticket-grid button.ok{border-color:#8fd0a7;background:var(--mint)}
+.ticket-grid button.bad{border-color:#f2a08b;background:#ffe6dd}
+.topic-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.topic-grid button{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:10px;text-align:left;padding:13px 15px;border-radius:14px;background:var(--paper);border:2px solid var(--line);color:var(--ink);font-size:14px;font-weight:550}
+.topic-grid small{color:var(--muted);font-size:12px;white-space:nowrap}
+.topic-grid i{position:absolute;left:0;bottom:0;height:4px;background:#8fd0a7;border-radius:0 3px 3px 0}
+.ticket-run{max-width:1100px;margin:0 auto}
+.ticket-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:10px}
+.ticket-bar .ticket-strip{order:5;flex:1 0 100%}
+.ticket-run>.info-banner{margin:0 0 10px}
+.ticket-bar strong{flex:1;font-size:17px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ticket-timer{display:flex;align-items:center;gap:5px;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);background:var(--paper);border:2px solid var(--line);border-radius:12px;padding:5px 10px}
+.ticket-timer.low{color:#d4492f;border-color:#f2a08b}
+.star-button.on{color:#f0a020}
+.star-button.on svg{fill:#ffc94d}
+.ticket-strip{display:flex;gap:5px;overflow-x:auto;padding:3px 1px 8px;scrollbar-width:thin}
+.ticket-strip button{flex:0 0 34px;height:34px;border-radius:10px;background:var(--paper);border:2px solid var(--line);color:var(--ink);font-size:13px;font-weight:650}
+.ticket-strip button.done{background:#e6ebf3;border-color:#c2cde0}
+.ticket-strip button.extra{border-style:dashed}
+.ticket-strip button.ok{background:var(--mint);border-color:#8fd0a7}
+.ticket-strip button.bad{background:#ffe6dd;border-color:#f2a08b}
+.ticket-strip button.current{outline:3px solid var(--coral);outline-offset:1px}
+.ticket-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;background:var(--paper);border:2px solid var(--line);border-radius:20px;padding:18px}
+.ticket-card.no-image{grid-template-columns:1fr;max-width:780px;margin:0 auto}
+.ticket-image img{width:100%;border-radius:12px;display:block;background:#eee}
+.ticket-meta{color:var(--muted);font-size:12.5px}
+.ticket-body h2{font-size:19px;line-height:1.4;margin:6px 0 14px;color:var(--ink);font-weight:650}
+.ticket-answers{display:grid;gap:8px}
+.ticket-answers button{display:flex;gap:11px;align-items:flex-start;text-align:left;padding:11px 13px;border-radius:13px;background:#fff;border:2px solid var(--line);color:var(--ink);font-size:15px;line-height:1.4}
+.ticket-answers button span{flex:0 0 24px;height:24px;border-radius:8px;background:#f3ead9;display:grid;place-items:center;font-size:13px;font-weight:700}
+.ticket-answers button:not(:disabled):hover{border-color:var(--coral)}
+.ticket-answers button:disabled{cursor:default;opacity:.75}
+.ticket-answers button.correct{background:var(--mint);border-color:#5fb983;opacity:1}
+.ticket-answers button.wrong{background:#ffe6dd;border-color:#ec8a70;opacity:1}
+.ticket-answers button.chosen{background:#e6ebf3;border-color:#8ea3c7;opacity:1}
+.ticket-explain{margin-top:14px;padding:14px;border-radius:14px;background:#fbf5ea}
+.ticket-explain>strong{font-size:16px}
+.ticket-explain .primary-button{margin-top:12px}
+.explain-rules{display:grid;gap:8px;margin-top:8px;font-size:14px;line-height:1.5;color:#3c4656}
+.ticket-nav{display:flex;justify-content:space-between;margin-top:12px}
+.ticket-result{text-align:center;padding:26px 18px;border-radius:22px;background:#ffe6dd;margin-bottom:18px}
+.ticket-result.passed{background:var(--mint)}
+.ticket-result h1{margin:8px 0;font-size:30px;color:var(--ink)}
+.ticket-result-buttons{display:flex;gap:12px;justify-content:center;margin-top:14px}
+.ticket-result-buttons .primary-button{width:auto;margin:0}
+.ticket-review{display:grid;grid-template-columns:240px 1fr;gap:16px;padding:14px;border:2px solid var(--line);border-radius:16px;background:var(--paper);margin-bottom:10px}
+.ticket-review.no-image{grid-template-columns:1fr}
+.ticket-review img{width:100%;border-radius:10px}
+.ticket-review h3{font-size:16px;margin:4px 0 8px}
+.ticket-review p{margin:4px 0;font-size:14px}
+.review-wrong{color:#c4462c}.review-right{color:#2d8a55;font-weight:600}
+.rules-layout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start}
+.rules-nav{position:sticky;top:12px;max-height:calc(100dvh - 24px);overflow-y:auto;display:grid;gap:3px;padding-right:4px}
+.rules-nav button{display:flex;gap:9px;text-align:left;align-items:baseline;padding:7px 10px;border-radius:10px;background:none;color:#4a5566;font-size:13px;line-height:1.3}
+.rules-nav button span{flex:0 0 22px;font-weight:700;color:var(--muted)}
+.rules-nav button.active{background:var(--paper);color:var(--ink);font-weight:650;box-shadow:inset 3px 0 0 var(--coral)}
+.rules-search{display:flex;align-items:center;gap:9px;background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:0 13px;margin-bottom:14px}
+.rules-search input{flex:1;border:0;background:none;font:inherit;font-size:15px;padding:11px 0;outline:none;color:var(--ink);min-width:0}
+.rules-hint{color:var(--muted);font-size:13px}
+.rules-title{font-size:22px;color:var(--ink);margin:4px 0 12px}
+.rules-intro{line-height:1.6;color:#4a5566}
+.rule-point{display:grid;grid-template-columns:60px 1fr;gap:10px;padding:11px 12px;border-radius:12px;scroll-margin:80px}
+.rule-point+.rule-point{border-top:1px solid var(--line)}
+.rule-point.focused{background:#fff1d6;box-shadow:inset 3px 0 0 var(--coral)}
+.rule-point p{margin:0 0 6px;line-height:1.6;color:#2f3b4a}
+.rule-point mark{background:#ffe08a;border-radius:3px}
+.rule-id{color:var(--coral-deep);background:none;border:0;padding:0;font:inherit;font-weight:700;text-align:left;align-self:start}
+.rule-tickets{display:inline-flex;align-items:center;gap:5px;margin-top:2px;padding:4px 10px;border-radius:999px;background:#f3ead9;border:0;color:var(--ink);font-size:12.5px;font-weight:600}
+.sign-group h2{font-size:18px;margin:22px 0 10px;color:var(--ink)}
+.sign-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.sign-card{position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;padding:12px 8px;border-radius:14px;background:var(--paper);border:2px solid var(--line);color:var(--ink);scroll-margin:80px}
+.sign-card.focused{border-color:var(--coral);background:#fff1d6}
+.sign-card .sign-icon{width:54px;height:54px}
+.sign-card strong{font-size:13px}
+.sign-card small{font-size:12px;line-height:1.35;color:#4a5566}
+.sign-card .rule-tickets{position:absolute;top:6px;right:6px;padding:2px 7px}
+.sign-shape{width:54px;height:54px;box-sizing:border-box;display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--ink);background:#fff;border:6px solid #c8302a;border-radius:50%}
+.sign-shape.warn{border:0;border-radius:0;clip-path:polygon(50% 3%,98% 94%,2% 94%);background:radial-gradient(circle at 50% 66%,#fff 0 13px,#c8302a 14px);padding-top:18px}
+.sign-shape.prio{border-radius:4px;transform:rotate(45deg) scale(.75);border-color:#fff;background:#ffcd2b;box-shadow:0 0 0 1px #888}
+.sign-shape.order{background:#2a63c8;border-color:#fff;color:#fff;box-shadow:0 0 0 1px #2a63c8}
+.sign-shape.special,.sign-shape.info{border-radius:6px;background:#2a63c8;border-color:#fff;color:#fff;box-shadow:0 0 0 1px #2a63c8}
+.sign-shape.service{border-radius:6px;background:#fff;border-color:#2a63c8}
+.sign-shape.plate{border-radius:6px;height:34px;border:2px solid #1d2120}
+@media(max-width:900px),(max-height:600px) and (orientation:landscape){
+  .ticket-actions{grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0}
+  .ticket-action{padding:10px 12px;column-gap:8px}.ticket-action strong{font-size:14px}.ticket-action span{font-size:11px}
+  .ticket-section h2{font-size:16px;margin:16px 0 8px}
+  .rules-layout{grid-template-columns:1fr;gap:10px}
+  .rules-nav{position:static;max-height:none;display:flex;overflow-x:auto;gap:6px;padding:0 0 6px}
+  .rules-nav button{flex:0 0 auto;white-space:nowrap;background:var(--paper);border:2px solid var(--line);padding:6px 10px}
+  .rules-nav button.active{border-color:var(--coral);box-shadow:none}
+  .rule-point{grid-template-columns:48px 1fr;padding:9px 6px}
+}
+@media(max-height:600px) and (orientation:landscape){
+  .tickets-page .page-intro,.rules-page .page-intro{display:none}
+  .ticket-card{gap:12px;padding:10px;border-radius:14px}
+  .ticket-card:not(.no-image){grid-template-columns:42% 1fr}
+  .ticket-body h2{font-size:15px;margin:3px 0 8px}
+  .ticket-answers{gap:5px}.ticket-answers button{font-size:13.5px;padding:7px 9px}
+  .ticket-strip button{flex-basis:30px;height:30px}
+  .ticket-bar{margin-bottom:4px;flex-wrap:nowrap}.ticket-bar strong{flex:0 1 auto;max-width:150px;font-size:14px}.ticket-bar .ticket-strip{order:0;flex:1 1 0;min-width:0;padding-bottom:4px}
+  .ticket-run>.info-banner{margin:0 0 6px;padding:5px 10px}.ticket-grid button{height:38px}.ticket-meta{font-size:11px}
+  .explain-rules{font-size:13px}
+}
+@media(max-width:700px) and (orientation:portrait){
+  .ticket-actions{grid-template-columns:1fr}.ticket-card{grid-template-columns:1fr}.ticket-review{grid-template-columns:1fr}
+}

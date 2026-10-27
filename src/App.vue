@@ -15,6 +15,7 @@ import { buildCity } from './game/city';
 import { signCatalog } from './game/signs';
 import { poseLabel, sideLabel } from './game/regulator';
 import { canResume, escapeAction, type ModalState } from './game/session';
+import { SoundBoard } from './sound';
 import { questions } from './theory';
 
 const canvasHost = ref<HTMLElement>();
@@ -44,7 +45,7 @@ const dialTicks = Array.from({ length: 17 }, (_, i) => { const value = i * 500, 
 const redArc = (() => { const a = dialPoint(6000, 103), b = dialPoint(RPM_MAX, 103); return `M${a.x} ${a.y}A103 103 0 0 1 ${b.x} ${b.y}`; })();
 const dialArc = (() => { const a = dialPoint(0, 103), b = dialPoint(RPM_MAX, 103); return `M${a.x} ${a.y}A103 103 0 1 1 ${b.x} ${b.y}`; })();
 const shownGasLevel = computed(() => Math.max(gasLevel.value, Math.round(telemetry.throttle * GAS_LEVELS)));
-const defaults: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false, cityMap: false };
+const defaults: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false, cityMap: false, sound: true };
 function readSaved<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
 function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Browsers can deny storage; driving remains available. */ } }
 const storedSettings = readSaved<Partial<GameSettings>>('pdd-settings-v1', {});
@@ -150,6 +151,17 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let previouslyCompleted = false;
 let wheelReturnFrame = 0;
 
+const sound = new SoundBoard();
+let tickTimer: ReturnType<typeof setInterval> | undefined;
+function unlockSound() { sound.unlock(); }
+watch(() => settings.sound, on => { sound.enabled = on; }, { immediate: true });
+watch(() => [telemetry.rpm, telemetry.throttle, playing.value] as const, ([rpm, throttle, running]) => sound.engine(rpm, throttle, running));
+watch(() => playing.value && (telemetry.signal === 'left' || telemetry.signal === 'right' || telemetry.signal === 'hazard'), blinking => {
+  clearInterval(tickTimer); if (blinking) { sound.tick(); tickTimer = setInterval(() => sound.tick(), 450); }
+});
+watch(() => telemetry.violations.length, (count, before) => { if (count > (before ?? 0)) sound.error(); });
+watch(() => examReport.value?.passed, passed => { if (passed) sound.success(); });
+watch(() => telemetry.completed, done => { if (done && telemetry.violations.length === 0) sound.success(); });
 function notify(text: string) { message.value = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => message.value = '', 4200); }
 function applyCamera(mode: CameraMode) { cameraMode.value = mode; looking.value = 'forward'; engine?.setCamera(mode); }
 function look(value: Look) { looking.value = value; engine?.setLook(value); }
@@ -243,12 +255,13 @@ onMounted(async () => {
     engine.setMirrorElements([mirrorLeft.value!, mirrorRear.value!, mirrorRight.value!]); engine.updateSettings(settings); if (lessonIndex.value > 0) engine.setLesson(lesson.value.id);
   } catch (error) { fatal.value = 'Не удалось запустить 3D. Проверьте поддержку WebGL и аппаратное ускорение браузера.'; console.error(error); }
   window.addEventListener('keydown', keyboard);
+  window.addEventListener('pointerdown', unlockSound); window.addEventListener('keydown', unlockSound);
   document.addEventListener('fullscreenchange', syncFullscreen);
   // Phones and short screens lose a lot of space to browser chrome: point at the fullscreen button once per visit.
   const small = window.matchMedia('(pointer: coarse)').matches || window.innerHeight < 620;
   if (small && document.fullscreenEnabled && !document.fullscreenElement) { fsHint.value = true; fsHintTimer = setTimeout(() => fsHint.value = false, 9000); }
 });
-onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); document.removeEventListener('fullscreenchange', syncFullscreen); cancelAnimationFrame(wheelReturnFrame); window.removeEventListener('keydown', keyboard); engine?.dispose(); });
+onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); window.removeEventListener('pointerdown', unlockSound); window.removeEventListener('keydown', unlockSound); clearTimeout(fsHintTimer); document.removeEventListener('fullscreenchange', syncFullscreen); cancelAnimationFrame(wheelReturnFrame); window.removeEventListener('keydown', keyboard); engine?.dispose(); });
 </script>
 
 <template>
@@ -293,7 +306,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
           <div v-if="telemetry.speedLimit" class="hud-sign active" title="Действующее ограничение скорости"><RoadSignIcon code="3.24" :value="telemetry.speedLimit" /><small v-if="showHudHints">до перекрёстка</small></div>
           <div v-for="sign in hudSigns" :key="sign.id" class="hud-sign" :title="signCatalog[sign.code].name"><RoadSignIcon :code="sign.code" :value="sign.value" /><small v-if="showHudHints">{{ signCatalog[sign.code].name }}</small></div>
         </div>
-        <div v-if="telemetry.violations.length" class="violation-chip" :title="telemetry.violations[telemetry.violations.length - 1].title"><Icon name="hazard" :size="14" />{{ telemetry.violations.length }}</div>
+        <div v-if="telemetry.violations.length" :key="telemetry.violations.length" class="violation-chip" :title="telemetry.violations[telemetry.violations.length - 1].title"><Icon name="hazard" :size="14" />{{ telemetry.violations.length }}</div>
         <div v-if="looking !== 'forward'" class="return-look"><button class="glass-button" @click="look('forward')"><Icon name="camera" :size="16" /> Взгляд вперёд</button></div>
         <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">{{ practiceId ? `ПРАКТИКА · ${practiceSituation?.topic ?? ''}` : `ИНСПЕКТОР · ${Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length)}/${telemetry.exam.steps.length}` }}</span>{{ telemetry.exam.command }}<small v-if="practiceId && telemetry.speed < 6" class="inspector-hint">{{ practiceScenes[practiceId]?.hint }}</small></div>
         <div v-else-if="!examView && !telemetry.completed" class="inspector-bubble task-bubble" role="status"><span class="inspector-badge">ЗАДАНИЕ · {{ Math.min(telemetry.lessonStep + 1, steps.length) }}/{{ steps.length }}</span>{{ steps[Math.min(telemetry.lessonStep, steps.length - 1)] }}</div>
@@ -338,7 +351,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
 
     <main v-if="tab === 'progress'" class="content-page progress-page"><div class="page-intro"><span class="eyebrow">МАЛЕНЬКИЕ ШАГИ — БОЛЬШОЙ ПУТЬ</span><h1>Ваш прогресс</h1><p>Результаты сохраняются в этом браузере на вашем устройстве.</p></div><div class="stat-grid"><div><Icon name="flag" :size="26"/><strong>{{ progress.lessons }}</strong><span>Успешных занятий</span></div><div><Icon name="drive" :size="26"/><strong>{{ progress.bestDistance }} <small>м</small></strong><span>Самая длинная поездка</span></div><div><Icon name="book" :size="26"/><strong>{{ progress.theoryCorrect.length }} <small>/ {{ questions.length }}</small></strong><span>Вопросов разобрано верно</span></div><div><Icon name="flag" :size="26"/><strong>{{ progress.examsPassed }} <small>/ {{ progress.examsTaken }}</small></strong><span>Экзаменов сдано</span></div><div><Icon name="check" :size="26"/><strong>{{ practiceOrder.filter(id => progress.practiceResults[id] === 0).length }} <small>/ {{ practiceOrder.length }}</small></strong><span>Ситуаций без ошибок</span></div></div><section v-for="(item, index) in lessons" :key="item.id" class="progress-lesson"><span class="progress-lesson-icon"><Icon :name="progress.lessonResults[item.id] === 0 ? 'check' : 'drive'" :size="38" /></span><div><span class="eyebrow">ПРАКТИКА · ЗАНЯТИЕ {{ (index + 1).toString().padStart(2, '0') }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }} {{ progress.lessonResults[item.id] === undefined ? 'Ещё не пройдено.' : progress.lessonResults[item.id] === 0 ? 'Пройдено без нарушений.' : `Лучший результат: нарушений — ${progress.lessonResults[item.id]}.` }}</p></div><button class="primary-button" @click="selectLesson(index); tab = 'practice'">За руль<Icon name="arrow" :size="16" /></button></section></main>
 
-    <div v-if="showHelp || showSettings" class="modal-backdrop" @click.self="showHelp = showSettings = false"><section class="modal" role="dialog" aria-modal="true" :aria-label="showHelp ? 'Управление' : 'Настройки'"><button class="modal-close icon-button" aria-label="Закрыть" @click="showHelp = showSettings = false"><Icon name="close"/></button><span class="eyebrow">ГОРОДСКАЯ АВТОШКОЛА</span><h2>{{ showHelp ? 'Всё под рукой' : 'Настроим под вас' }}</h2><template v-if="showHelp"><p>На телефоне вращайте руль пальцем. Газ и тормоз можно удерживать одновременно с рулением.</p><dl class="key-list"><div><dt>W / ↑</dt><dd>Газ</dd></div><div><dt>S / ↓</dt><dd>Тормоз</dd></div><div><dt>A / D</dt><dd>Руль влево / вправо</dd></div><div><dt>1 · 2 · 3 · 4</dt><dd>P · R · N · D</dd></div><div><dt>Q / E</dt><dd>Поворотники</dd></div><div><dt>Пробел / B / C</dt><dd>Ручник / ремень / камера</dd></div><div><dt>Esc</dt><dd>Пауза / продолжение</dd></div></dl><div class="info-banner">Для выхода из P удерживайте тормоз. Затем снимите ручник и плавно нажмите газ.</div></template><template v-else><label class="setting-row">Качество графики<select v-model="settings.quality"><option value="low">Экономичное</option><option value="balanced">Сбалансированное</option><option value="high">Высокое</option></select></label><label class="setting-row">Голос инспектора<input v-model="settings.voice" type="checkbox" /></label><label class="setting-row">Схема города на экране<input v-model="settings.cityMap" type="checkbox" /></label><label class="setting-row">Подсказки к знакам на экзамене<input v-model="settings.examHints" type="checkbox" /></label><label class="setting-row">Рабочие зеркала<input v-model="settings.mirrors" type="checkbox" /></label><label class="setting-row">Покачивание кузова<input v-model="settings.motion" type="checkbox" /></label><label class="setting-row">Чувствительность руля<input v-model.number="settings.sensitivity" type="range" min="0.5" max="1.5" step="0.1" /></label><p class="settings-note">Если игра замедляется, выберите экономичное качество. Зеркала показывают настоящую обстановку с отдельных камер.</p></template><button class="primary-button" @click="showHelp = showSettings = false">Понятно<Icon name="check" :size="16" /></button></section></div>
+    <div v-if="showHelp || showSettings" class="modal-backdrop" @click.self="showHelp = showSettings = false"><section class="modal" role="dialog" aria-modal="true" :aria-label="showHelp ? 'Управление' : 'Настройки'"><button class="modal-close icon-button" aria-label="Закрыть" @click="showHelp = showSettings = false"><Icon name="close"/></button><span class="eyebrow">ГОРОДСКАЯ АВТОШКОЛА</span><h2>{{ showHelp ? 'Всё под рукой' : 'Настроим под вас' }}</h2><template v-if="showHelp"><p>На телефоне вращайте руль пальцем. Газ и тормоз можно удерживать одновременно с рулением.</p><dl class="key-list"><div><dt>W / ↑</dt><dd>Газ</dd></div><div><dt>S / ↓</dt><dd>Тормоз</dd></div><div><dt>A / D</dt><dd>Руль влево / вправо</dd></div><div><dt>1 · 2 · 3 · 4</dt><dd>P · R · N · D</dd></div><div><dt>Q / E</dt><dd>Поворотники</dd></div><div><dt>Пробел / B / C</dt><dd>Ручник / ремень / камера</dd></div><div><dt>Esc</dt><dd>Пауза / продолжение</dd></div></dl><div class="info-banner">Для выхода из P удерживайте тормоз. Затем снимите ручник и плавно нажмите газ.</div></template><template v-else><label class="setting-row">Качество графики<select v-model="settings.quality"><option value="low">Экономичное</option><option value="balanced">Сбалансированное</option><option value="high">Высокое</option></select></label><label class="setting-row">Звук<input v-model="settings.sound" type="checkbox" /></label><label class="setting-row">Голос инспектора<input v-model="settings.voice" type="checkbox" /></label><label class="setting-row">Схема города на экране<input v-model="settings.cityMap" type="checkbox" /></label><label class="setting-row">Подсказки к знакам на экзамене<input v-model="settings.examHints" type="checkbox" /></label><label class="setting-row">Рабочие зеркала<input v-model="settings.mirrors" type="checkbox" /></label><label class="setting-row">Покачивание кузова<input v-model="settings.motion" type="checkbox" /></label><label class="setting-row">Чувствительность руля<input v-model.number="settings.sensitivity" type="range" min="0.5" max="1.5" step="0.1" /></label><p class="settings-note">Если игра замедляется, выберите экономичное качество. Зеркала показывают настоящую обстановку с отдельных камер.</p></template><button class="primary-button" @click="showHelp = showSettings = false">Понятно<Icon name="check" :size="16" /></button></section></div>
     <div v-if="showExamPicker" class="modal-backdrop" @click.self="showExamPicker = false"><section class="modal exam-modal" role="dialog" aria-modal="true" aria-label="Экзамен с инспектором">
       <button class="modal-close icon-button" aria-label="Закрыть" @click="showExamPicker = false"><Icon name="close"/></button>
       <span class="eyebrow">ПРАКТИЧЕСКИЙ ЭКЗАМЕН</span><h2>Экзамен с инспектором</h2>
@@ -364,6 +377,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
       </ol>
     </section></div>
     <div v-if="showDebrief && examReport" class="modal-backdrop"><section class="modal exam-modal debrief" role="dialog" aria-modal="true" aria-label="Разбор экзамена">
+      <div v-if="examReport.passed" class="celebrate" aria-hidden="true"><i v-for="n in 16" :key="n"></i></div>
       <span class="eyebrow">{{ practiceId ? 'РАЗБОР СИТУАЦИИ' : 'РАЗБОР ЭКЗАМЕНА' }}</span>
       <h2 :class="examReport.passed ? 'verdict-ok' : 'verdict-fail'">{{ practiceId ? (examReport.passed ? 'Ситуация пройдена' : examReport.failReason ? 'Ситуация не выполнена' : 'Есть ошибки') : (examReport.passed ? 'Экзамен сдан' : 'Экзамен не сдан') }}</h2>
       <p>{{ examReport.failReason ? `${practiceId ? 'Остановлено' : 'Экзамен прекращён'}: ${examReport.failReason}` : examReport.passed ? 'Ни одной ошибки. Так держать!' : `Ошибок: ${examReport.errors}. Ниже — где и почему.` }}</p>

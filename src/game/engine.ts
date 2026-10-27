@@ -20,7 +20,7 @@ const CITY_BOUNDS = { minX: -240, maxX: 240, minZ: -240, maxZ: 240 };
 export interface ExamTelemetry { practice: string | null; selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; progress: Record<string, SituationProgress>; route: string[]; target: string | null; }
 export type CameraMode = 'cockpit' | 'chase';
 export type Look = 'forward' | 'left' | 'rear' | 'right';
-export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; voice: boolean; examHints: boolean; cityMap: boolean; }
+export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; voice: boolean; examHints: boolean; cityMap: boolean; sound: boolean; }
 export class DrivingEngine {
   readonly state = initialVehicle();
   readonly input: DriveInput = { throttle: 0, brake: 0, steer: 0 };
@@ -79,13 +79,13 @@ export class DrivingEngine {
   private turnAmount = 0;
   private mirrorElements: HTMLElement[] = [];
   private size = new THREE.Vector2();
-  private settings: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false, cityMap: false };
+  private settings: GameSettings = { quality: 'balanced', mirrors: true, motion: true, sensitivity: 1, voice: true, examHints: false, cityMap: false, sound: true };
   paused = true;
   cameraMode: CameraMode = 'cockpit';
   look: Look = 'forward';
   constructor(private container: HTMLElement, private emit: (t: Telemetry) => void, private notify: (message: string) => void) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.1;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.NeutralToneMapping; this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; this.renderer.autoClear = false;
     container.appendChild(this.renderer.domElement);
     this.overlayQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }));

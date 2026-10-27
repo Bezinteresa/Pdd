@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Obstacle } from './vehicle';
 import { cityMap, type Approach, type RoadMap } from './roads';
 import type { Lamp, SignalGroup } from './signals';
@@ -8,8 +9,26 @@ import type { Point } from './roads';
 
 export interface SignalHead { group: SignalGroup; approach: Approach; red: THREE.MeshBasicMaterial; yellow: THREE.MeshBasicMaterial; green: THREE.MeshBasicMaterial; }
 export interface World { scene: THREE.Scene; obstacles: Obstacle[]; car: THREE.Group; shell: THREE.Group; wheel: THREE.Group; tires: THREE.Group[]; frontTires: THREE.Group[]; goal: THREE.Group; signals: SignalHead[]; }
-const materials = new Map<string, THREE.MeshStandardMaterial>();
-function material(color: string) { if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9 })); return materials.get(color)!; }
+// «Toy town» look: pastel palette and three-step cartoon shading. Builders keep naming their original colours;
+// this table maps them to the toy palette in one place, so the whole world can be re-tinted here.
+const toy: Record<string, string> = {
+  '#9bad91': '#a9d49b', '#c0c5b5': '#ede5d4', '#596760': '#8e97a6', '#b8bea9': '#cfe3b8',
+  '#e8dfbe': '#fff7e8', '#ece4ca': '#fff7e8', '#e5e3d1': '#fff7e8', '#f2eddb': '#fff7e8',
+  '#d9d4bb': '#f7c9a9', '#c9c7ae': '#bfe0c2', '#e5d9c5': '#ffe6a8', '#c8cbb9': '#d9cbef', '#698782': '#a8d8ea',
+  '#866d50': '#b98760', '#638977': '#7cc79a', '#687e73': '#7a8494', '#617367': '#7a8494', '#63756d': '#7a8494', '#8b9690': '#7a8494', '#2c3d34': '#4a4f5c',
+  '#d9e7d8': '#fbf4e6', '#c3d1c0': '#f1e6d2', '#d1dfcf': '#f1e6d2', '#9eb7a6': '#8fbfd9', '#283c36': '#3d4a5c', '#4f6357': '#6c7a8f', '#29352e': '#3a3f4b', '#263431': '#3a3f4b', '#a6b4a6': '#d8dde6',
+  '#c4b77c': '#ffd166', '#71939b': '#7fb7e6', '#e6d9bc': '#f4a7b9', '#546d70': '#5b7c99', '#4f6669': '#5b7c99',
+  '#b5654f': '#ff8c6b', '#5f7f9a': '#7fb7e6', '#d8c27a': '#ffd166', '#7a8f6a': '#8fd3a8', '#9a7fa6': '#c3a6e6', '#e0dccf': '#f7efe2',
+  '#3c4f55': '#5b7c99', '#d24d3c': '#ff7a5c', '#e9e1cf': '#fff3df', '#8c948d': '#9aa3b2', '#4b5650': '#a88a6a',
+};
+export const toyColor = (color: string) => toy[color.toLowerCase()] ?? color;
+let toonRamp: THREE.DataTexture | null = null;
+function ramp() {
+  if (!toonRamp) { toonRamp = new THREE.DataTexture(new Uint8Array([150, 150, 150, 255, 205, 205, 205, 255, 255, 255, 255, 255]), 3, 1); toonRamp.minFilter = toonRamp.magFilter = THREE.NearestFilter; toonRamp.needsUpdate = true; }
+  return toonRamp;
+}
+const materials = new Map<string, THREE.MeshToonMaterial>();
+function material(color: string) { const c = toyColor(color); if (!materials.has(c)) materials.set(c, new THREE.MeshToonMaterial({ color: c, gradientMap: ramp() })); return materials.get(c)!; }
 export function box(parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, color: string) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material(color)); mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
 }
@@ -20,9 +39,21 @@ function textTexture(text: string, bg: string, fg: string, width = 512, height =
 function board(parent: THREE.Object3D, text: string, x: number, y: number, z: number, width: number, height: number, bg: string, fg: string) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: textTexture(text, bg, fg), side: THREE.DoubleSide })); m.position.set(x, y, z); parent.add(m); return m;
 }
+/** Puffy cartoon tree: a short trunk and three overlapping balls of leaves. */
 export function tree(scene: THREE.Scene, x: number, z: number, size = 1) {
   box(scene, .35 * size, 2.2 * size, .35 * size, x, 1.1 * size, z, '#866d50');
-  const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.65 * size, 0), material('#638977')); foliage.scale.y = 1.45; foliage.position.set(x, 3.1 * size, z); foliage.castShadow = true; scene.add(foliage);
+  const balls: [number, number, number, number, string][] = [[0, 3.2, 0, 1.5, '#7cc79a'], [.8, 2.7, .3, 1.05, '#8fd3a8'], [-.7, 2.8, -.4, 1.1, '#6fbf8e']];
+  for (const [dx, y, dz, r, color] of balls) {
+    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(r * size, 1), material(color)); ball.position.set(x + dx * size, y * size, z + dz * size); ball.castShadow = true; scene.add(ball);
+  }
+}
+/** Gable roof: a triangular prism with its ridge along the longer side. */
+function roof(scene: THREE.Scene, w: number, d: number, x: number, y: number, z: number, color: string) {
+  const along = Math.max(w, d), across = Math.min(w, d), rise = Math.min(3.2, across * .35);
+  const shape = new THREE.Shape(); shape.moveTo(-across / 2 - .35, 0); shape.lineTo(across / 2 + .35, 0); shape.lineTo(0, rise); shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: along + .5, bevelEnabled: false }); geometry.translate(0, 0, -(along + .5) / 2);
+  const mesh = new THREE.Mesh(geometry, material(color)); mesh.position.set(x, y, z); if (w > d) mesh.rotation.y = Math.PI / 2;
+  mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
 }
 function cone(scene: THREE.Scene, x: number, z: number) {
   box(scene, .7, .09, .7, x, .05, z, '#394340');
@@ -43,11 +74,19 @@ function parkedCar(scene: THREE.Scene, x: number, z: number, color: string, obst
 }
 type LampSlot = { approach: Approach; x: number; z: number; rotation: number };
 
+/** Vertical sky gradient used as the scene background: deep sky blue above, pale near the horizon. */
+function skyTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 256;
+  const ctx = canvas.getContext('2d')!, g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#7fc4ec'); g.addColorStop(.55, '#bfe3f2'); g.addColorStop(1, '#e6f3f1');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 2, 256);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
+}
 /** Sky, fog and lights shared by every map. */
 export function newScene(fogFar = 240) {
-  const scene = new THREE.Scene(); scene.background = new THREE.Color('#c7d9d3'); scene.fog = new THREE.Fog('#c7d9d3', 75, fogFar);
-  scene.add(new THREE.HemisphereLight('#f0f8f7', '#7f8974', 2.6));
-  const sun = new THREE.DirectionalLight('#fff1d5', 3.1); sun.position.set(-45, 75, 45); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.camera.left = -90; sun.shadow.camera.right = 90; sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90; sun.shadow.camera.far = 180; sun.shadow.bias = -.001; scene.add(sun);
+  const scene = new THREE.Scene(); scene.background = skyTexture(); scene.fog = new THREE.Fog('#e2f1f0', 90, fogFar + 40);
+  scene.add(new THREE.HemisphereLight('#fff6e3', '#a9cf9a', 2.4));
+  const sun = new THREE.DirectionalLight('#ffe9c7', 2.7); sun.position.set(-45, 75, 45); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.camera.left = -90; sun.shadow.camera.right = 90; sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90; sun.shadow.camera.far = 180; sun.shadow.bias = -.001; scene.add(sun);
   return scene;
 }
 /** Crosswalk stripes and stop lines of signalised approaches, from the map data the judge uses. */
@@ -78,7 +117,8 @@ export function houses(scene: THREE.Scene, lot: { x: number; z: number; w: numbe
   box(scene, lot.w, .25, lot.d, lot.x, .05, lot.z, '#b8bea9');
   for (const dx of [-1, 1]) for (const dz of [-1, 1]) {
     const x = lot.x + dx * lot.w * .23, z = lot.z + dz * lot.d * .23, w = lot.w * .38, d = lot.d * .37, h = 7 + (count * 7 % 11); count++;
-    box(scene, w, h, d, x, h / 2 + .25, z, colors[count % colors.length]); box(scene, w + .35, .45, d + .35, x, h + .4, z, '#798879');
+    const body = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, .6), material(colors[count % colors.length])); body.position.set(x, h / 2 + .25, z); body.castShadow = body.receiveShadow = true; scene.add(body);
+    roof(scene, w, d, x, h + .25, z, ['#e8836b', '#6fb38a', '#f2a65a', '#9c89c9', '#e07a6b'][count % 5]);
     for (let y = 2.7; y < h; y += 2.8) for (let wx = -w / 2 + 2; wx < w / 2 - .5; wx += 3.3) { box(scene, 1.5, 1.3, .06, x + wx, y, z + d / 2 + .04, '#698782'); box(scene, 1.5, 1.3, .06, x + wx, y, z - d / 2 - .04, '#698782'); }
     obstacles.push({ x, z, halfX: w / 2, halfZ: d / 2 });
   }
@@ -96,6 +136,7 @@ export function finishWorld(scene: THREE.Scene, obstacles: Obstacle[], slots: La
   // Lamps are added after batching: each head owns materials that change with the signal phase.
   const signals: SignalHead[] = [];
   const lampGeometry = new THREE.CircleGeometry(.17, 16);
+  // Lamps stay unlit basic materials so the signal colour reads the same in light and shade.
   for (const slot of slots) {
     const head: SignalHead = { group: slot.approach.group, approach: slot.approach, red: new THREE.MeshBasicMaterial({ color: '#4a3a36' }), yellow: new THREE.MeshBasicMaterial({ color: '#4a4636' }), green: new THREE.MeshBasicMaterial({ color: '#36463a' }) };
     const face = new THREE.Group(); face.position.set(slot.x, 0, slot.z); face.rotation.y = slot.rotation; scene.add(face);
@@ -170,7 +211,7 @@ export function paintSignal(head: SignalHead, lamp: Lamp | 'off', time: number) 
 /** AI car body; its group origin sits on the ground at the car centre, nose towards -z. */
 export function trafficCar(scene: THREE.Scene, color: string) {
   const g = new THREE.Group(); scene.add(g);
-  box(g, 1.8, .65, 3.9, 0, .7, 0, color); box(g, 1.55, .6, 1.9, 0, 1.3, .2, '#4f6669');
+  const body = new THREE.Mesh(new RoundedBoxGeometry(1.8, .7, 3.9, 2, .22), material(color)); body.position.set(0, .7, 0); body.castShadow = true; g.add(body); box(g, 1.55, .6, 1.9, 0, 1.3, .2, '#4f6669');
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .55, .64, sx * .86, .35, sz * 1.25, '#263431');
   for (const x of [-.55, .55]) { box(g, .38, .12, .05, x, .8, -1.96, '#fff2c4'); box(g, .38, .12, .05, x, .8, 1.96, '#c06c55'); }
   return g;
@@ -252,5 +293,5 @@ export function roadSign(scene: THREE.Scene, code: string, at: Point, facing: Po
 /** Removes a prop group and frees what it owns; shared materials from the cache stay. */
 export function disposeProp(object: THREE.Object3D) {
   object.removeFromParent();
-  object.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); const m = o.material as THREE.Material & { map?: THREE.Texture | null }; if (![...materials.values()].includes(m as THREE.MeshStandardMaterial)) { m.map?.dispose(); m.dispose(); } } });
+  object.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); const m = o.material as THREE.Material & { map?: THREE.Texture | null }; if (![...materials.values()].includes(m as THREE.MeshToonMaterial)) { m.map?.dispose(); m.dispose(); } } });
 }

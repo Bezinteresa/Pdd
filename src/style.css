@@ -235,3 +235,69 @@
 .panel-map{margin-top:12px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .map-overlay{position:absolute;left:22px;top:118px;width:170px;border-radius:12px;overflow:hidden;box-shadow:0 4px 14px #0003;z-index:3;pointer-events:none;opacity:.92}
 @media(max-height:600px) and (orientation:landscape){.map-overlay{top:auto;bottom:150px;left:auto;right:150px;width:96px}}
+
+/* ===== 0.7 «Toy town» look: warm cream, coral actions, mint secondary, warm ink instruments ===== */
+:root{--green:#2f5d50;--mint:#d8f0e1;--line:#efe3cf;--muted:#8a8070;--paper:#fffdf8;--coral:#ff8c6b;--coral-deep:#e2694a;--ink:#2e3a4f;--ink-soft:#3d4b63;color:#2f3b4a;background:#fbf5ea}
+body{background:#fbf5ea}
+.brand-mark{background:var(--coral);color:#fffaf2;border-radius:14px;box-shadow:0 3px 0 var(--coral-deep)}
+.main-nav button.active{color:var(--coral-deep)}
+.main-nav button.active:after{background:var(--coral);height:4px;border-radius:4px}
+.simulator{border-radius:22px;border:2px solid #f1e3cc;background:#cfe8f2}
+.lesson-panel{background:var(--paper);border:2px solid var(--line);border-radius:22px}
+.primary-button{background:var(--coral);color:#fffaf2;border-radius:14px;font-size:12px;font-weight:650;box-shadow:0 4px 0 var(--coral-deep);transition:transform .12s,box-shadow .12s,background .16s}
+.primary-button:hover{background:#ff9a7d}
+.primary-button:active{transform:translateY(3px);box-shadow:0 1px 0 var(--coral-deep)}
+.reset-button{background:var(--mint);color:var(--green);border-radius:12px;font-size:10.5px;font-weight:600}
+.reset-button:hover{background:#c9ead6}
+.modal{background:var(--paper);border-radius:24px;border:2px solid var(--line)}
+.instructor-note{background:#fff3e6;border-radius:14px}
+.instructor-note strong{color:var(--coral-deep)}
+.lesson-steps .current .step-circle{background:var(--coral);color:#fff;border-color:var(--coral)}
+.lesson-progress i{background:var(--coral)}
+.inspector-bubble{background:#fffdf6f2;border:2px solid #ffd2c2;border-radius:18px;color:#2f3b4a}
+.inspector-badge{color:var(--coral-deep)}
+.paused-label button{border-radius:14px;box-shadow:0 4px 0 #e8dcc6}
+.paused-label .lesson-picker button{border-radius:12px}
+.paused-label .lesson-picker button.exam-entry{background:var(--coral);color:#fffaf2}
+.paused-label .lesson-picker button.practice-entry{background:#3d9a78;color:#fffaf2}
+.glass-button{border-radius:12px;background:#fffdf6d9}
+.camera-switch{border-radius:14px}
+.scene-footer{background:var(--ink)}
+/* Instruments, pedals and wheel in warm ink instead of moss green */
+.tacho-face{fill:#2e3a4fe6;stroke:#ffffff33}
+.signal-controls,.gear-selector{background:#2e3a4fe8;border-radius:12px}
+.gear-selector button.selected{background:#ffd166;color:#3b2f14}
+.aux-controls button{background:var(--ink-soft);border-radius:12px}
+.aux-controls button.engaged{background:#8fd3a8;color:#1f3b2c}
+.wheel-outer{fill:#3d4b63cc;stroke:#2e3a4f}
+.wheel-spoke{fill:#55647e;stroke:#8c9ab3}
+.wheel-hub{fill:#2e3a4f;stroke:#8c9ab3}
+.pedal{background:linear-gradient(125deg,#6c7a8f,#3d4b63);border-color:#9aa6ba;box-shadow:0 5px 0 #26303f,0 9px 15px #1d222b44;border-radius:14px 14px 8px 8px}
+.gas-pedal{background:linear-gradient(125deg,#bfe9cf,#6fbf8e);border-color:#d6f2e0;color:#1f3b2c;box-shadow:0 5px 0 #4f9a6e,0 9px 15px #1d222b44}
+.pedal.pressed{background:#ffd166;color:#3b2f14}
+.violation-chip{background:#ff6b5be8;border-radius:16px}
+.hud-sign small,.regulator-text{background:#fffdf6f2;border-radius:12px}
+.practice-item{border-radius:14px;border-width:2px}
+.practice-item.passed .practice-index{background:#bfe9cf}
+.exam-option{border-radius:14px;border-width:2px}
+.exam-option.picked{border-color:var(--coral);background:#fff3ec}
+.exam-option.picked .exam-check{background:var(--coral);border-color:var(--coral);color:#fff}
+.debrief-card{border-radius:16px}
+.debrief h2.verdict-ok{color:#2f8f5a}
+.debrief h2.verdict-fail{color:#d0563a}
+.stat-grid>div,.progress-lesson{border-radius:20px}
+/* Error: the counter gives a short shake each time it grows. Success: a burst of confetti over the debrief. */
+.violation-chip{animation:chip-shake .45s ease-out}
+@keyframes chip-shake{0%{transform:scale(1.25)}20%{transform:translateX(-5px) rotate(-6deg)}40%{transform:translateX(5px) rotate(6deg)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}100%{transform:none}}
+.debrief{position:relative}
+.celebrate{position:absolute;inset:0 0 auto 0;height:0;pointer-events:none;z-index:2}
+.celebrate i{position:absolute;top:30px;left:50%;width:10px;height:14px;border-radius:3px;opacity:0;animation:confetti 1.4s cubic-bezier(.2,.7,.4,1) forwards}
+.celebrate i:nth-child(4n+1){background:#ff8c6b}.celebrate i:nth-child(4n+2){background:#ffd166}.celebrate i:nth-child(4n+3){background:#8fd3a8}.celebrate i:nth-child(4n+4){background:#7fb7e6}
+.celebrate i:nth-child(1){--dx:-220px;--dy:60px}.celebrate i:nth-child(2){--dx:-170px;--dy:-20px}.celebrate i:nth-child(3){--dx:-120px;--dy:90px}.celebrate i:nth-child(4){--dx:-80px;--dy:-40px}
+.celebrate i:nth-child(5){--dx:-40px;--dy:110px}.celebrate i:nth-child(6){--dx:-10px;--dy:-60px}.celebrate i:nth-child(7){--dx:30px;--dy:80px}.celebrate i:nth-child(8){--dx:70px;--dy:-30px}
+.celebrate i:nth-child(9){--dx:110px;--dy:100px}.celebrate i:nth-child(10){--dx:150px;--dy:-10px}.celebrate i:nth-child(11){--dx:200px;--dy:70px}.celebrate i:nth-child(12){--dx:240px;--dy:20px}
+.celebrate i:nth-child(13){--dx:-260px;--dy:10px}.celebrate i:nth-child(14){--dx:260px;--dy:-30px}.celebrate i:nth-child(15){--dx:-140px;--dy:140px}.celebrate i:nth-child(16){--dx:130px;--dy:150px}
+@keyframes confetti{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(var(--dx),calc(var(--dy) + 120px)) rotate(540deg)}}
+.debrief h2.verdict-ok{animation:verdict-pop .5s cubic-bezier(.3,1.6,.5,1)}
+@keyframes verdict-pop{0%{transform:scale(.6);opacity:0}100%{transform:none;opacity:1}}
+@media(prefers-reduced-motion:reduce){.celebrate{display:none}}

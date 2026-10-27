@@ -430,9 +430,12 @@ body{background:#fbf5ea}
   .ticket-actions{grid-template-columns:1fr}.ticket-card{grid-template-columns:1fr}.ticket-review{grid-template-columns:1fr}
 }
 /* ===== 0.9 Кнопки выбора в меню паузы чуть крупнее на больших экранах; остальное меню как было ===== */
-@media(min-height:601px) and (min-width:901px){
-  .paused-label .lesson-picker{gap:7px}
-  .paused-label .lesson-picker button{padding:9px 14px;font-size:12px;font-weight:650;white-space:nowrap}
+/* Four choices as a tidy 2×2 grid of equal buttons, so they never break into ragged rows. */
+.paused-label .lesson-picker{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.paused-label .lesson-picker button{justify-content:center;padding:12px 18px;font-size:14px;font-weight:700;border-radius:15px;white-space:nowrap;box-shadow:0 4px 0 #0000002e}
+@media(max-height:600px) and (orientation:landscape){
+  .paused-label .lesson-picker{gap:6px}
+  .paused-label .lesson-picker button{padding:8px 14px;font-size:12.5px;border-radius:13px;box-shadow:0 3px 0 #0000002e}
 }
 /* The driving controls shrink with the scene on mid-size windows, so they never cover half of the road.
    Phones in landscape (height ≤ 600) keep their own tuned layout. */

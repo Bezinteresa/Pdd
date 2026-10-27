@@ -6,11 +6,11 @@ import { activeZone, approachAhead, cityMap } from './roads';
 import { lampsAt, type Lamp } from './signals';
 import { TripJudge, type Violation } from './rules';
 import { carPosition, crossStreetLanes, TrafficSystem, type TrafficCar } from './traffic';
-import { ExamRunner, stopLineD, tramTrack, type RouteStep } from './exam';
+import { ExamRunner, stopLineD, tramTrack, type RouteStep, type SituationProgress } from './exam';
 import { allowedManeuvers, regulatorAt, sideOf } from './regulator';
 
 export interface Telemetry { speed: number; rpm: number; gear: Gear; belt: boolean; handbrake: boolean; signal: VehicleState['signal']; steering: number; distance: number; fps: number; lessonId: string; lessonStep: number; completed: boolean; moving: boolean; speedLimit: number | null; collisions: number; violations: Violation[]; signalAhead: { lamp: Lamp; distance: number } | null; tripTime: number; throttle: number; brake: number; exam: ExamTelemetry | null; }
-export interface ExamTelemetry { selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; }
+export interface ExamTelemetry { selected: string[]; steps: RouteStep[]; stepIndex: number; command: string; finished: boolean; failReason: string | null; progress: Record<string, SituationProgress>; }
 export type CameraMode = 'cockpit' | 'chase';
 export type Look = 'forward' | 'left' | 'rear' | 'right';
 export interface GameSettings { quality: 'low' | 'balanced' | 'high'; mirrors: boolean; motion: boolean; sensitivity: number; voice: boolean; }
@@ -144,7 +144,7 @@ export class DrivingEngine {
     this.updateCar(dt); this.updateTraffic(); this.updateCamera(dt);
     this.render(now);
     this.frames++; if (now - this.fpsAt >= 1000) { this.fps = Math.round(this.frames * 1000 / (now - this.fpsAt)); this.frames = 0; this.fpsAt = now; }
-    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.pedalThrottle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800 + this.pedalThrottle * 700, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonId: this.lesson.id, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: activeZone(cityMap, this.state)?.limit ?? null, collisions: this.collisions, violations: this.judge.violations.length === this.violationsSent ? this.judge.violations : [...this.judge.violations], signalAhead: this.signalAhead(), tripTime: this.simTime, throttle: this.pedalThrottle, brake: this.pedalBrake, exam: this.exam ? { selected: this.exam.selected, steps: this.exam.steps, stepIndex: this.exam.stepIndex, command: this.exam.step.command, finished: this.exam.finished, failReason: this.exam.failReason } : null }); this.violationsSent = this.judge.violations.length; }
+    if (now - this.emitAt > 70) { this.emitAt = now; this.emit({ speed: Math.abs(this.state.speed) * 3.6, rpm: this.state.gear === 'P' || this.state.gear === 'N' ? 850 + this.pedalThrottle * 2200 : 850 + (Math.abs(this.state.speed) * 190) % 1800 + this.pedalThrottle * 700, gear: this.state.gear, belt: this.state.belt, handbrake: this.state.handbrake, signal: this.state.signal, steering: this.state.steer, distance: this.state.distance, fps: this.fps, lessonId: this.lesson.id, lessonStep: this.lessonStep, completed: this.complete, moving: !this.paused, speedLimit: activeZone(cityMap, this.state)?.limit ?? null, collisions: this.collisions, violations: this.judge.violations.length === this.violationsSent ? this.judge.violations : [...this.judge.violations], signalAhead: this.signalAhead(), tripTime: this.simTime, throttle: this.pedalThrottle, brake: this.pedalBrake, exam: this.exam ? { selected: this.exam.selected, steps: this.exam.steps, stepIndex: this.exam.stepIndex, command: this.exam.step.command, finished: this.exam.finished, failReason: this.exam.failReason, progress: Object.fromEntries(this.exam.selected.map(id => [id, this.exam!.progress(id)])) } : null }); this.violationsSent = this.judge.violations.length; }
   };
   /** One fixed 1/60 s step: signals, traffic, the learner's car, the judge and the exam share the same simulation time. */
   private fixedStep(throttle: number, brake: number, steer: number, now: number) {
@@ -158,7 +158,8 @@ export class DrivingEngine {
     const counted = hit && now - this.collisionAt > 1500;
     if (counted) { this.collisions++; this.collisionAt = now; }
     const before = this.judge.violations.length;
-    this.judge.update(prev, this.state, this.simTime, exam?.regulator ? { ns: 'green', ew: 'green' } : lamps, counted);
+    // A finished exam keeps its log frozen: nothing done afterwards may change the result being reviewed.
+    if (!exam?.finished) this.judge.update(prev, this.state, this.simTime, exam?.regulator ? { ns: 'green', ew: 'green' } : lamps, counted);
     if (exam) {
       this.judge.violations.slice(before).forEach(v => exam.attribute(v));
       for (const phrase of exam.update({ prev, state: this.state, time: this.simTime, dt: 1 / 60, traffic: this.traffic, forced, judge: this.judge })) { if (phrase !== exam.step.command) this.notify(phrase); this.onSay(phrase); }

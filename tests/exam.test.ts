@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyManeuver, compatible, ExamRunner, randomSelection, readySituations } from '../src/game/exam.ts';
+import { classifyManeuver, compatible, ExamRunner, randomSelection, readySituations, situationOutcome } from '../src/game/exam.ts';
 import { allowedManeuvers, sideOf } from '../src/game/regulator.ts';
 import { TripJudge } from '../src/game/rules.ts';
 import { cityMap, maneuverThrough } from '../src/game/roads.ts';
@@ -112,4 +112,78 @@ test('traffic reports hard braking caused by the learner crossing its lane, not 
   let followed = 0;
   for (let i = 0; i < 300; i++) followed += follow.step(1 / 60, { ns: 'red', ew: 'green' }, { x: -20, z: 4.5, heading: Math.PI / 2, speed: 0 }).length;
   assert.equal(followed, 0);
+});
+
+// Sign 2.5 at junction D: the learner drives south (heading π) in the lane x = -74; the stop line is at z = -10.5.
+const LINE_Z = -10.5;
+const frontToLine = (v: VehicleState) => LINE_Z - (v.z + 2.05);
+function stopCtx() { return { ctx: setup(['d-stop'], 'D'), v: car({ x: -74, z: -30, heading: Math.PI, speed: 0 }), t: 0 }; }
+/** Moves south (or north for negative speed) until the front is `target` metres before the line, with step `dt`. */
+function moveTo(run: ReturnType<typeof stopCtx>, target: number, speed: number, dt = 1 / 60) {
+  run.v.speed = speed;
+  for (let i = 0; i < 6000 && (speed > 0 ? frontToLine(run.v) > target : frontToLine(run.v) < target); i++) {
+    const prev = { x: run.v.x, z: run.v.z, heading: run.v.heading };
+    run.v.z += run.v.speed * dt; run.t += dt;
+    run.ctx.exam.update({ prev, state: run.v, time: run.t, dt, traffic: run.ctx.traffic, forced: [], judge: run.ctx.judge });
+  }
+}
+function standStill(run: ReturnType<typeof stopCtx>, seconds: number, dt = 1 / 60) {
+  run.v.speed = 0;
+  for (let i = 0; i < seconds / dt; i++) { run.t += dt; run.ctx.exam.update({ prev: run.v, state: run.v, time: run.t, dt, traffic: run.ctx.traffic, forced: [], judge: run.ctx.judge }); }
+}
+const stopCodes = (run: ReturnType<typeof stopCtx>) => codes(run.ctx.judge).filter(c => c === 'stop-sign');
+
+test('STOP: driving through without stopping is one violation', () => {
+  const run = stopCtx(); moveTo(run, 6, 4); moveTo(run, -6, 4);
+  assert.deepEqual(stopCodes(run), ['stop-sign']);
+});
+test('STOP: an early stop 7.45 m back does not replace the stop at the line', () => {
+  const run = stopCtx(); moveTo(run, 7.45, 4); standStill(run, 1); moveTo(run, -3, 3);
+  assert.deepEqual(stopCodes(run), ['stop-sign']);
+});
+test('STOP: standing still with the front at the line is accepted', () => {
+  const run = stopCtx(); moveTo(run, .8, 4); standStill(run, 1); moveTo(run, -6, 3);
+  assert.deepEqual(stopCodes(run), []);
+});
+test('STOP: stopping only after crossing the line is a violation', () => {
+  const run = stopCtx(); moveTo(run, -1, 3); standStill(run, 1); moveTo(run, -6, 3);
+  assert.deepEqual(stopCodes(run), ['stop-sign']);
+});
+test('STOP: slow rolling over the line is not a stop', () => {
+  const run = stopCtx(); moveTo(run, 2, 4); moveTo(run, -3, .5);
+  assert.deepEqual(stopCodes(run), ['stop-sign']);
+});
+test('STOP: backing away cancels the stop; stopping again at the line on the second approach counts', () => {
+  const backedOff = stopCtx(); moveTo(backedOff, 1, 4); standStill(backedOff, 1); moveTo(backedOff, 6, -2); moveTo(backedOff, -3, 3);
+  assert.deepEqual(stopCodes(backedOff), ['stop-sign']);
+  const again = stopCtx(); moveTo(again, 1, 4); standStill(again, 1); moveTo(again, 6, -2); moveTo(again, .5, 2); standStill(again, 1); moveTo(again, -3, 3);
+  assert.deepEqual(stopCodes(again), []);
+});
+test('STOP: the verdict does not depend on the simulation step', () => {
+  for (const dt of [1 / 30, 1 / 60, 1 / 120]) {
+    const ok = stopCtx(); moveTo(ok, .8, 4, dt); standStill(ok, 1, dt); moveTo(ok, -6, 3, dt);
+    const bad = stopCtx(); moveTo(bad, -6, 4, dt);
+    assert.deepEqual([stopCodes(ok), stopCodes(bad)], [[], ['stop-sign']], `dt=${dt}`);
+  }
+});
+
+test('debrief outcome: unreached situations are not marked as passed', () => {
+  const ctx = setup(['b-tram', 'd-stop', 'u-turn']), v = car({ x: 4.5, z: 30, speed: 8 });
+  let t = drive(ctx, v, 6.2);
+  v.z = -80; v.heading = 0; t = drive(ctx, v, .3, t);
+  v.heading = Math.PI / 2; drive(ctx, v, 2, t);
+  assert.equal(ctx.exam.finished, true);
+  assert.deepEqual(['b-tram', 'd-stop', 'u-turn'].map(id => situationOutcome(ctx.exam.progress(id), 0)), ['interrupted', 'not-reached', 'not-reached']);
+  assert.equal(situationOutcome('done', 0), 'passed');
+  assert.equal(situationOutcome('done', 2), 'failed');
+});
+
+test('a two-slot situation stays unfinished after its first slot (partially driven controller)', () => {
+  const ctx = setup(['a-regulator']), v = car({ x: 4.5, z: 30, speed: 8 });
+  drive(ctx, v, .2);
+  assert.equal(ctx.exam.progress('a-regulator'), 'active');
+  drive(ctx, v, 6, .2);
+  assert.equal(ctx.exam.step.node, 'B');
+  assert.equal(ctx.exam.progress('a-regulator'), 'active');
+  assert.equal(situationOutcome(ctx.exam.progress('a-regulator'), 0), 'interrupted');
 });

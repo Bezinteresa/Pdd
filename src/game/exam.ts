@@ -122,8 +122,19 @@ const westAtB: TrafficLane = { id: 'b-west', axis: 'x', sign: -1, offset: -89, s
 const southFromB = laneFromApproach('b-south', cityMap.approaches.find(a => a.id === 'central-s')!, -128, 70, false);
 export const tramTrack: TrafficLane = { id: 'tram', axis: 'x', sign: 1, offset: -82, start: -78, end: 78, loop: false };
 
+export type SituationProgress = 'pending' | 'active' | 'done';
+export type SituationOutcome = 'passed' | 'failed' | 'interrupted' | 'not-reached';
+/** What the debrief says about a situation: an empty error list alone does not mean it was driven. */
+export function situationOutcome(progress: SituationProgress, errors: number): SituationOutcome {
+  if (progress === 'done') return errors ? 'failed' : 'passed';
+  return progress === 'active' ? 'interrupted' : 'not-reached';
+}
+
 export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; }
 const CROSSWALK_Z = 15, CROSSWALK_HALF = 8.5;
+const FRONT_OFFSET = 2.05;
+/** Game tolerances for sign 2.5, not legal distances: how close to the line the front must stand, and what counts as stopped. */
+export const STOP_ZONE = 3, STOP_SPEED = .1;
 
 export interface ExamFrame { prev: Pose; state: VehicleState; time: number; dt: number; traffic: TrafficSystem; forced: ForcedBrake[]; judge: TripJudge; }
 
@@ -141,11 +152,12 @@ export class ExamRunner {
   private inside = new Map<NodeId, { heading: number; time: number }>();
   private spawned = new Set<string>();
   private yieldedCars = new Set<number>();
-  private stopMin = Infinity;
+  private stoppedAtLine = false;
   private stopChecked = false;
   private pedestrianFlagged = false;
   private uTurn: { started: boolean } = { started: false };
   private finishHold = 0;
+  private slots = new Map<SlotId, 'active' | 'done'>();
 
   readonly selected: string[];
   constructor(selected: string[]) {
@@ -165,7 +177,18 @@ export class ExamRunner {
   }
   attribute(v: Violation) { v.situation ??= this.currentSituation(); }
 
-  private advance(say: string[]) { this.stepIndex++; this.announced = false; this.announce(say); }
+  private advance(say: string[]) {
+    const left = this.step.slot; if (left) this.slots.set(left, 'done');
+    this.stepIndex++; this.announced = false;
+    const entered = this.step.slot; if (entered && !this.slots.has(entered)) this.slots.set(entered, 'active');
+    this.announce(say);
+  }
+  /** Progress of a selected situation, derived from the route steps of every slot it occupies. */
+  progress(id: string): SituationProgress {
+    const slots = byId(id)?.slots ?? [];
+    if (slots.length && slots.every(slot => this.slots.get(slot) === 'done')) return 'done';
+    return slots.some(slot => this.slots.has(slot)) ? 'active' : 'pending';
+  }
   private announce(say: string[]) { if (!this.announced && !this.finished) { this.announced = true; say.push(this.step.command); } }
   private fail(frame: ExamFrame, detail: string, say: string[]) {
     frame.judge.record('route', frame.time, frame.state, detail, { situation: this.currentSituation() });
@@ -258,16 +281,22 @@ export class ExamRunner {
     }
   }
 
-  /** Sign 2.5: a full stop is required before the stop line. */
+  /**
+   * Sign 2.5: the car must stand still with its front just before the stop line, then cross it.
+   * A stop further back (in a queue) or after the line does not count; backing away cancels an earlier stop.
+   */
   private judgeStopSign(frame: ExamFrame) {
     if (!this.stopSign || this.stopChecked || this.step.slot !== 'D') return;
-    const { state } = frame;
-    if (state.x < -78 || state.x > -62 || Math.cos(state.heading) > -.7) return;
-    const front = state.z + 2.05, toLine = stopLineD[0].z - front;
-    if (toLine >= 0 && toLine <= 8) this.stopMin = Math.min(this.stopMin, Math.abs(state.speed));
-    if (toLine < 0) {
+    const { state, prev } = frame;
+    const [a, b] = stopLineD;
+    if (state.x < a.x - 1 || state.x > b.x + 1 || Math.cos(state.heading) > -.7) return;
+    const toLine = (p: Pose) => a.z - (p.z - Math.cos(p.heading) * FRONT_OFFSET);
+    const now = toLine(state), before = toLine(prev);
+    if (now > STOP_ZONE) this.stoppedAtLine = false;
+    else if (now >= 0 && Math.abs(state.speed) < STOP_SPEED) this.stoppedAtLine = true;
+    if (before >= 0 && now < 0) {
       this.stopChecked = true;
-      if (this.stopMin > .15) frame.judge.record('stop-sign', frame.time, state, 'Перед стоп-линией нужна полная остановка, даже если на главной дороге никого нет.', { situation: 'd-stop' });
+      if (!this.stoppedAtLine) frame.judge.record('stop-sign', frame.time, state, 'Перед стоп-линией нужна полная остановка у самой линии, даже если на главной дороге никого нет.', { situation: 'd-stop' });
     }
   }
 

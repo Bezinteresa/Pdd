@@ -5,10 +5,11 @@ import { DrivingEngine, type CameraMode, type GameSettings, type Look, type Tele
 import type { Gear } from './game/vehicle';
 import { lessons } from './game/lesson';
 import { lampLabel } from './game/signals';
-import { compatible, randomSelection, readySituations, situations, type Situation } from './game/exam';
+import { compatible, randomSelection, readySituations, situationOutcome, situations, type Situation, type SituationOutcome } from './game/exam';
 import { ruleTexts, PDD_EDITION } from './game/pddText';
 import type { Violation } from './game/rules';
 import SituationSchema from './SituationSchema.vue';
+import { canResume, escapeAction, type ModalState } from './game/session';
 import { questions } from './theory';
 
 const canvasHost = ref<HTMLElement>();
@@ -49,7 +50,8 @@ const examSelection = ref<string[]>(readSaved<string[]>('pdd-exam-selection-v1',
 const examView = computed(() => telemetry.exam !== null);
 const situationTopics = computed(() => [...new Set(situations.map(s => s.topic))].map(topic => ({ topic, items: situations.filter(s => s.topic === topic) })));
 const plannedCount = situations.filter(s => s.status === 'planned').length;
-const examReport = ref<{ passed: boolean; failReason: string | null; cards: { situation: Situation; violations: Violation[] }[]; other: Violation[]; rules: string[] } | null>(null);
+const examReport = ref<{ passed: boolean; failReason: string | null; errors: number; cards: { situation: Situation; violations: Violation[]; outcome: SituationOutcome }[]; other: Violation[]; rules: string[] } | null>(null);
+const outcomeText: Record<SituationOutcome, string> = { passed: 'Ситуация выполнена без ошибок.', failed: '', interrupted: 'Экзамен прекращён на этой ситуации — до конца её не проехали.', 'not-reached': 'До этой ситуации не доехали, она не оценивалась.' };
 function canPick(id: string) { return examSelection.value.includes(id) || (examSelection.value.length < 4 && compatible([...examSelection.value, id])); }
 function togglePick(id: string) { if (!canPick(id)) return; examSelection.value = examSelection.value.includes(id) ? examSelection.value.filter(x => x !== id) : [...examSelection.value, id]; }
 function randomExam() { examSelection.value = randomSelection(); }
@@ -70,12 +72,18 @@ function speak(text: string) {
 }
 function buildReport() {
   const exam = telemetry.exam; if (!exam) return;
+  // The report keeps its own copy, so nothing after the finish can change what is being reviewed.
+  const violations = [...telemetry.violations];
   const chosen = exam.selected.map(id => situations.find(s => s.id === id)!).filter(Boolean);
-  const cards = chosen.map(situation => ({ situation, violations: telemetry.violations.filter(v => v.situation === situation.id) }));
-  const other = telemetry.violations.filter(v => !v.situation || !exam.selected.includes(v.situation));
-  const rules = [...new Set([...chosen.flatMap(s => s.ruleIds), ...telemetry.violations.flatMap(v => v.ruleIds)])].filter(id => ruleTexts[id]);
-  examReport.value = { passed: !exam.failReason && telemetry.violations.length === 0, failReason: exam.failReason, cards, other, rules };
-  if (examReport.value.passed) progress.examsPassed = (progress.examsPassed ?? 0) + 1;
+  const cards = chosen.map(situation => {
+    const own = violations.filter(v => v.situation === situation.id);
+    return { situation, violations: own, outcome: situationOutcome(exam.progress[situation.id] ?? 'pending', own.length) };
+  });
+  const other = violations.filter(v => !v.situation || !exam.selected.includes(v.situation));
+  const rules = [...new Set([...chosen.flatMap(s => s.ruleIds), ...violations.flatMap(v => v.ruleIds)])].filter(id => ruleTexts[id]);
+  const passed = !exam.failReason && violations.length === 0 && cards.every(c => c.outcome === 'passed');
+  examReport.value = { passed, failReason: exam.failReason, errors: violations.length, cards, other, rules };
+  if (passed) progress.examsPassed = (progress.examsPassed ?? 0) + 1;
   progress.examsTaken = (progress.examsTaken ?? 0) + 1;
 }
 watch(() => telemetry.exam?.finished, finished => { if (finished && !showDebrief.value) { pause(); buildReport(); showDebrief.value = true; } });
@@ -98,7 +106,9 @@ let wheelReturnFrame = 0;
 function notify(text: string) { message.value = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => message.value = '', 4200); }
 function applyCamera(mode: CameraMode) { cameraMode.value = mode; looking.value = 'forward'; engine?.setCamera(mode); }
 function look(value: Look) { looking.value = value; engine?.setLook(value); }
-function play() { if (!engine) return; (document.activeElement as HTMLElement | null)?.blur?.(); started.value = true; playing.value = !playing.value; engine.setPaused(!playing.value); clearControls(); }
+const modals = (): ModalState => ({ help: showHelp.value, settings: showSettings.value, examPicker: showExamPicker.value, debrief: showDebrief.value });
+// Resuming is refused while any dialog is open, so the car never drives on behind the exam picker or debrief.
+function play() { if (!engine || (!playing.value && !canResume(modals()))) return; (document.activeElement as HTMLElement | null)?.blur?.(); started.value = true; playing.value = !playing.value; engine.setPaused(!playing.value); clearControls(); }
 function pause() { playing.value = false; engine?.setPaused(true); clearControls(); }
 function reset() { pause(); engine?.reset(); steerDegrees.value = 0; previouslyCompleted = false; looking.value = 'forward'; }
 // Driving controls act on touch-down: with one finger on the brake, mobile browsers often drop the click of a second tap.
@@ -154,11 +164,18 @@ function syncFullscreen() { if (document.fullscreenElement) { fsHint.value = fal
 function fullscreen() { fsHint.value = false; clearTimeout(fsHintTimer); if (document.fullscreenElement) document.exitFullscreen().catch(() => notify('Не удалось выйти из полного экрана')); else document.documentElement.requestFullscreen?.().catch(() => notify('Полный экран недоступен в этом браузере')); }
 function answer(index: number) { if (selectedAnswer.value !== null) return; selectedAnswer.value = index; if (index === question.value.correct && !progress.theoryCorrect.includes(questionIndex.value)) progress.theoryCorrect.push(questionIndex.value); }
 function nextQuestion() { questionIndex.value = (questionIndex.value + 1) % questions.length; selectedAnswer.value = null; }
-function keyboard(event: KeyboardEvent) { if (event.code === 'Escape') { if (showHelp.value || showSettings.value) { showHelp.value = showSettings.value = false; } else if (tab.value === 'practice') play(); } }
+function keyboard(event: KeyboardEvent) {
+  if (event.code !== 'Escape') return;
+  const action = escapeAction(modals());
+  if (action.close.includes('help')) showHelp.value = false;
+  if (action.close.includes('settings')) showSettings.value = false;
+  if (action.close.includes('examPicker')) showExamPicker.value = false;
+  if (action.togglePause && tab.value === 'practice') play();
+}
 watch(settings, value => { engine?.updateSettings(value); save('pdd-settings-v1', value); }, { deep: true });
 watch(progress, value => save('pdd-progress-v1', value), { deep: true });
 watch(tab, async value => { pause(); engine?.setSuspended(value !== 'practice'); if (value === 'practice') { await nextTick(); window.dispatchEvent(new Event('resize')); } });
-watch([showHelp, showSettings, showExamPicker], ([help, prefs, picker]) => { if (help || prefs || picker) pause(); });
+watch([showHelp, showSettings, showExamPicker, showDebrief], dialogs => { if (dialogs.some(Boolean)) pause(); });
 onMounted(async () => {
   await nextTick();
   try {
@@ -220,11 +237,11 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
         <div v-if="message" class="toast" role="status">{{ message }}</div>
         <div v-if="fatal" class="fatal-state"><Icon name="hazard" :size="32" /><p>{{ fatal }}</p></div>
 
-        <div class="control-deck">
-          <div class="steering-area"><div class="gear-selector" aria-label="Селектор автоматической коробки"><span>АКПП</span><button v-for="gear in (['P', 'R', 'N', 'D'] as Gear[])" :key="gear" :class="{ selected: telemetry.gear === gear }" :aria-label="`Выбрать ${gear}`" :aria-pressed="telemetry.gear === gear" @pointerdown="tap($event, () => setGear(gear))" @click="tap($event, () => setGear(gear))">{{ gear }}</button></div><div class="steering-caption">{{ wheelPointer !== null ? 'РУЛЕНИЕ' : 'ВРАЩАЙТЕ РУЛЬ' }}</div><button class="steering-wheel" aria-label="Руль: вращайте пальцем или используйте A и D" @pointerdown="wheelDown" @pointermove="wheelMove" @pointerup="wheelUp" @pointercancel="wheelUp" @lostpointercapture="wheelUp"><svg viewBox="0 0 180 180" :style="{ transform: `rotate(${wheelPointer !== null || Math.abs(steerDegrees) > 1 ? steerDegrees : telemetry.steering * 240}deg)` }"><circle class="wheel-outer" cx="90" cy="90" r="75"/><circle class="wheel-inner" cx="90" cy="90" r="58"/><path class="wheel-spoke" d="M74 80 20 64l-4 24 58 10m32-18 54-16 4 24-58 10m-23 8-6 55h26l-6-55"/><circle class="wheel-hub" cx="90" cy="90" r="24"/><text x="90" y="97" text-anchor="middle">У</text><path class="wheel-stripe" d="M86 10h8v15h-8z"/></svg></button><span class="control-key">A / D <span>или пальцем</span></span></div>
+        <div class="control-deck" :class="{ chase: cameraMode === 'chase' }">
+          <div class="steering-area"><div class="signal-controls"><button :class="{ lit: telemetry.signal === 'left' || telemetry.signal === 'hazard' }" aria-label="Левый поворотник" @pointerdown="tap($event, () => toggleSignal('left'))" @click="tap($event, () => toggleSignal('left'))"><Icon name="left" /></button><button :class="{ 'hazard-lit': telemetry.signal === 'hazard' }" aria-label="Аварийная сигнализация" @pointerdown="tap($event, () => toggleSignal('hazard'))" @click="tap($event, () => toggleSignal('hazard'))"><Icon name="hazard" :size="18" /></button><button :class="{ lit: telemetry.signal === 'right' || telemetry.signal === 'hazard' }" aria-label="Правый поворотник" @pointerdown="tap($event, () => toggleSignal('right'))" @click="tap($event, () => toggleSignal('right'))"><Icon name="arrow" /></button></div><div class="gear-selector" aria-label="Селектор автоматической коробки"><span>АКПП</span><button v-for="gear in (['P', 'R', 'N', 'D'] as Gear[])" :key="gear" :class="{ selected: telemetry.gear === gear }" :aria-label="`Выбрать ${gear}`" :aria-pressed="telemetry.gear === gear" @pointerdown="tap($event, () => setGear(gear))" @click="tap($event, () => setGear(gear))">{{ gear }}</button></div><div class="steering-caption">{{ wheelPointer !== null ? 'РУЛЕНИЕ' : 'ВРАЩАЙТЕ РУЛЬ' }}</div><button class="steering-wheel" aria-label="Руль: вращайте пальцем или используйте A и D" @pointerdown="wheelDown" @pointermove="wheelMove" @pointerup="wheelUp" @pointercancel="wheelUp" @lostpointercapture="wheelUp"><svg viewBox="0 0 180 180" :style="{ transform: `rotate(${wheelPointer !== null || Math.abs(steerDegrees) > 1 ? steerDegrees : telemetry.steering * 240}deg)` }"><circle class="wheel-outer" cx="90" cy="90" r="75"/><circle class="wheel-inner" cx="90" cy="90" r="58"/><path class="wheel-spoke" d="M74 80 20 64l-4 24 58 10m32-18 54-16 4 24-58 10m-23 8-6 55h26l-6-55"/><circle class="wheel-hub" cx="90" cy="90" r="24"/><text x="90" y="97" text-anchor="middle">У</text><path class="wheel-stripe" d="M86 10h8v15h-8z"/></svg></button><span class="control-key">A / D <span>или пальцем</span></span></div>
 
           <div class="center-controls">
-            <div class="cluster"><svg class="tacho" viewBox="-125 -125 250 250" aria-hidden="true"><circle class="tacho-face" r="112" /><path class="tacho-track" :d="dialArc" /><path class="tacho-red" :d="redArc" /><line v-for="t in dialTicks" :key="t.value" :class="['tacho-tick', { major: t.major, red: t.red }]" :x1="t.a.x" :y1="t.a.y" :x2="t.b.x" :y2="t.b.y" /><text v-for="t in dialTicks.filter(t => t.major)" :key="`l${t.value}`" :class="['tacho-label', { red: t.red }]" :x="t.label.x" :y="t.label.y">{{ t.value / 1000 }}</text><g class="tacho-needle" :style="{ transform: `rotate(${rpmAngle}deg)` }"><path d="M-3 -88 0 -112 3 -88Z" /><circle cy="-88" r="3" /></g></svg><div class="signal-controls"><button :class="{ lit: telemetry.signal === 'left' || telemetry.signal === 'hazard' }" aria-label="Левый поворотник" @pointerdown="tap($event, () => toggleSignal('left'))" @click="tap($event, () => toggleSignal('left'))"><Icon name="left" /></button><button :class="{ 'hazard-lit': telemetry.signal === 'hazard' }" aria-label="Аварийная сигнализация" @pointerdown="tap($event, () => toggleSignal('hazard'))" @click="tap($event, () => toggleSignal('hazard'))"><Icon name="hazard" :size="18" /></button><button :class="{ lit: telemetry.signal === 'right' || telemetry.signal === 'hazard' }" aria-label="Правый поворотник" @pointerdown="tap($event, () => toggleSignal('right'))" @click="tap($event, () => toggleSignal('right'))"><Icon name="arrow" /></button></div>
+            <div class="cluster"><svg class="tacho" viewBox="-125 -125 250 250" aria-hidden="true"><circle class="tacho-face" r="112" /><path class="tacho-track" :d="dialArc" /><path class="tacho-red" :d="redArc" /><line v-for="t in dialTicks" :key="t.value" :class="['tacho-tick', { major: t.major, red: t.red }]" :x1="t.a.x" :y1="t.a.y" :x2="t.b.x" :y2="t.b.y" /><text v-for="t in dialTicks.filter(t => t.major)" :key="`l${t.value}`" :class="['tacho-label', { red: t.red }]" :x="t.label.x" :y="t.label.y">{{ t.value / 1000 }}</text><g class="tacho-needle" :style="{ transform: `rotate(${rpmAngle}deg)` }"><path d="M-3 -88 0 -112 3 -88Z" /><circle cy="-88" r="3" /></g></svg>
             <div class="speedometer"><div class="speed-number" :class="{ speeding: telemetry.speedLimit && telemetry.speed > telemetry.speedLimit + .5 }">{{ Math.round(telemetry.speed).toString().padStart(2, '0') }}</div><div class="speed-unit">КМ/Ч</div><div class="rpm-line"><span :style="{ width: `${Math.min(100, telemetry.rpm / 50)}%` }"></span></div><div class="speed-meta"><span>{{ Math.round(telemetry.rpm / 100) / 10 }} <small>×1000 об/мин</small></span><strong>{{ telemetry.gear }}</strong></div></div>
             </div>
           </div>
@@ -272,12 +289,12 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
     <div v-if="showDebrief && examReport" class="modal-backdrop"><section class="modal exam-modal debrief" role="dialog" aria-modal="true" aria-label="Разбор экзамена">
       <span class="eyebrow">РАЗБОР ЭКЗАМЕНА</span>
       <h2 :class="examReport.passed ? 'verdict-ok' : 'verdict-fail'">{{ examReport.passed ? 'Экзамен сдан' : 'Экзамен не сдан' }}</h2>
-      <p>{{ examReport.failReason ? `Экзамен прекращён: ${examReport.failReason}` : examReport.passed ? 'Ни одной ошибки. Так держать!' : `Ошибок: ${telemetry.violations.length}. Ниже — где и почему.` }}</p>
-      <article v-for="card in examReport.cards" :key="card.situation.id" class="debrief-card" :class="{ failed: card.violations.length }">
+      <p>{{ examReport.failReason ? `Экзамен прекращён: ${examReport.failReason}` : examReport.passed ? 'Ни одной ошибки. Так держать!' : `Ошибок: ${examReport.errors}. Ниже — где и почему.` }}</p>
+      <article v-for="card in examReport.cards" :key="card.situation.id" class="debrief-card" :class="[card.outcome, { failed: card.violations.length }]">
         <div class="debrief-schema"><SituationSchema v-if="card.situation.schema" :schema="card.situation.schema" /></div>
-        <div class="debrief-body"><h3><Icon :name="card.violations.length ? 'hazard' : 'check'" :size="16" />{{ card.situation.title }}</h3><p>{{ card.situation.summary }}</p>
+        <div class="debrief-body"><h3><Icon :name="card.outcome === 'passed' ? 'check' : card.violations.length ? 'hazard' : 'flag'" :size="16" />{{ card.situation.title }}</h3><p>{{ card.situation.summary }}</p>
           <div v-for="v in card.violations" :key="v.id" class="debrief-error"><img v-if="snapshot(v.id)" :src="snapshot(v.id)" alt="Вид сверху в момент ошибки" /><div><strong>{{ v.title }}</strong><p>{{ v.detail }}</p><small>{{ formatTime(v.time) }}<template v-if="v.rule"> · {{ v.rule }}</template></small></div></div>
-          <p v-if="!card.violations.length" class="debrief-ok">Ситуация выполнена без ошибок.</p>
+          <p v-if="outcomeText[card.outcome]" :class="card.outcome === 'passed' ? 'debrief-ok' : 'debrief-skip'">{{ outcomeText[card.outcome] }}</p>
         </div>
       </article>
       <article v-if="examReport.other.length" class="debrief-card failed"><div class="debrief-body"><h3><Icon name="hazard" :size="16" />Другие ошибки на маршруте</h3>

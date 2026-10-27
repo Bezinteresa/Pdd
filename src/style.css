@@ -165,3 +165,15 @@
 .modal-backdrop{display:flex;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
 .modal{margin:auto;max-height:90vh;max-height:90dvh;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
 .exam-modal{max-height:92vh;max-height:92dvh}
+.debrief-card.not-reached,.debrief-card.interrupted{border-left-color:#b9bfae;background:#f6f6f0}
+.debrief-card.interrupted.failed{border-left-color:#c65a46}
+.debrief-skip{font-size:11px;color:#8b9285;margin-top:8px;font-style:italic}
+
+/* Turn signals and hazard sit above the gear selector; the dial now surrounds only the speed readout */
+.steering-area .signal-controls{margin-bottom:6px;width:100%;max-width:170px}
+.tacho{height:172%}
+/* Third-person view: the instruments move next to the steering wheel, leaving the car in view */
+.control-deck.chase .center-controls{margin-right:auto;margin-left:14px}
+@media(max-width:1150px){.control-deck.chase .center-controls{margin-left:10px}}
+@media(max-height:600px) and (orientation:landscape){.steering-area .signal-controls{height:22px;margin-bottom:3px}.tacho{height:160%}.control-deck.chase .center-controls{margin-left:8px}}
+@media(max-height:600px) and (orientation:landscape){.steering-area{flex-basis:112px;width:112px}.steering-wheel{width:108px;height:108px}.steering-area .signal-controls{height:20px;margin-bottom:2px}.steering-area .gear-selector{margin-bottom:2px}}

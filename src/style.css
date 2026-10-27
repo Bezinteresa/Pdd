@@ -429,22 +429,16 @@ body{background:#fbf5ea}
 @media(max-width:700px) and (orientation:portrait){
   .ticket-actions{grid-template-columns:1fr}.ticket-card{grid-template-columns:1fr}.ticket-review{grid-template-columns:1fr}
 }
-/* ===== 0.9 Крупное «игровое» меню паузы ===== */
-.paused-label{gap:14px;max-width:92%}
-.paused-label>span{font-size:13px;letter-spacing:2px;font-weight:700}
-.paused-label .lesson-picker{display:grid;grid-template-columns:repeat(2,minmax(210px,1fr));gap:12px}
-.paused-label .lesson-picker button{justify-content:center;padding:15px 22px;font-size:16px;font-weight:700;border-radius:18px;background:#2f3b4ae6;color:#fffaf2;box-shadow:0 5px 0 #1d2530;transition:transform .1s,box-shadow .1s}
-.paused-label .lesson-picker button.selected{background:#d8f0e1;color:#2f5d50;box-shadow:0 5px 0 #9fcdb2}
-.paused-label .lesson-picker button.practice-entry{background:#3d9a78;color:#fffaf2;box-shadow:0 5px 0 #2a6f56}
-.paused-label .lesson-picker button.practice-entry.selected{background:#d8f0e1;color:#2f5d50;box-shadow:0 5px 0 #9fcdb2}
-.paused-label .lesson-picker button.exam-entry{background:var(--coral);color:#fffaf2;box-shadow:0 5px 0 var(--coral-deep)}
-.paused-label .lesson-picker button.exam-entry.selected{background:#fff1e6;color:var(--coral-deep);box-shadow:0 5px 0 #f2c2ad}
-.paused-label>button{padding:16px 46px;font-size:20px;font-weight:800;border-radius:20px;background:#fffaf2;color:var(--ink);box-shadow:0 6px 0 #e2d3b8,0 10px 30px #132e2533}
-.paused-label>button svg{width:22px;height:22px}
-.paused-label button:active{transform:translateY(4px);box-shadow:0 1px 0 #0003}
-@media(max-height:600px) and (orientation:landscape){
-  .paused-label{gap:8px}.paused-label>span{font-size:10px}
-  .paused-label .lesson-picker{gap:7px;grid-template-columns:repeat(2,minmax(170px,1fr))}
-  .paused-label .lesson-picker button{padding:9px 14px;font-size:13px;border-radius:14px;box-shadow:0 4px 0 #1d2530}
-  .paused-label>button{padding:10px 30px;font-size:16px}
+/* ===== 0.9 Кнопки выбора в меню паузы чуть крупнее на больших экранах; остальное меню как было ===== */
+@media(min-height:601px) and (min-width:901px){
+  .paused-label .lesson-picker{gap:7px}
+  .paused-label .lesson-picker button{padding:9px 14px;font-size:12px;font-weight:650;white-space:nowrap}
+}
+/* The driving controls shrink with the scene on mid-size windows, so they never cover half of the road.
+   Phones in landscape (height ≤ 600) keep their own tuned layout. */
+.simulator{container:sim / inline-size}
+@media(min-height:601px){
+  @container sim (max-width:900px){.control-deck{zoom:.85}}
+  @container sim (max-width:760px){.control-deck{zoom:.72}}
+  @container sim (max-width:620px){.control-deck{zoom:.62}}
 }

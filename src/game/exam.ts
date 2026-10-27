@@ -88,7 +88,7 @@ export type NodeId = 'A' | 'B' | 'CW' | 'D' | 'CE' | 'E';
 const area = (id: string) => cityMap.intersections.find(i => i.id === id)!.area;
 export const nodes: Record<NodeId, Rect> = { A: area('central'), B: area('north'), CW: area('corner-w'), D: area('junction-w'), CE: area('corner-e'), E: area('junction-e') };
 
-export interface RouteStep { kind: 'start' | 'node' | 'uturn' | 'finish'; node?: NodeId; maneuver?: Maneuver; slot?: SlotId; command: string; }
+export interface RouteStep { kind: 'start' | 'node' | 'uturn' | 'finish' | 'end'; node?: NodeId; maneuver?: Maneuver; slot?: SlotId; command: string; }
 export const uTurnZone: Rect = { x: 0, z: 52, halfX: 9, halfZ: 20 };
 export const stopLineD: [Point, Point] = [{ x: -77.5, z: -10.5 }, { x: -70.5, z: -10.5 }];
 export function finishZone(selected: string[]): Point { return selected.includes('u-turn') ? { x: 4.5, z: 34 } : { x: -4.5, z: 45 }; }
@@ -107,6 +107,26 @@ export function buildRoute(selected: string[]): RouteStep[] {
   steps.push({ kind: 'finish', command: 'Остановитесь в правой полосе в зелёной зоне.' });
   return steps;
 }
+
+/**
+ * Practice by situation: the car appears just before the staged place, gets one command and the run ends
+ * right after the situation. The hint is shown before the learner gets there (training, not the exam).
+ */
+export interface PracticeScene { spawn: { x: number; z: number; heading: number }; step: RouteStep; hint: string; }
+const north = 0, south = Math.PI, east = Math.PI / 2;
+export const practiceScenes: Record<string, PracticeScene> = {
+  'a1-signal': { spawn: { x: 4.5, z: 62, heading: north }, step: { kind: 'node', node: 'A', maneuver: 'straight', slot: 'A1', command: 'На перекрёстке со светофором двигайтесь прямо.' }, hint: 'На красный и жёлтый остановитесь перед стоп-линией. На жёлтый можно продолжить, только если плавно остановиться уже не получается.' },
+  'a2-pedestrian': { spawn: { x: -62, z: 4.5, heading: east }, step: { kind: 'node', node: 'A', maneuver: 'right', slot: 'A2', command: 'На перекрёстке поверните направо.' }, hint: 'Включите правый поворотник. Поворачивая, пропустите пешеходов на переходе, куда вы въезжаете.' },
+  'b-right-hand': { spawn: { x: 4.5, z: -28, heading: north }, step: { kind: 'node', node: 'B', maneuver: 'left', slot: 'B', command: 'На перекрёстке поверните налево.' }, hint: 'Знаков нет — перекрёсток равнозначный. Уступите автомобилю, который приближается справа.' },
+  'b-oncoming': { spawn: { x: 4.5, z: -28, heading: north }, step: { kind: 'node', node: 'B', maneuver: 'left', slot: 'B', command: 'На перекрёстке поверните налево.' }, hint: 'Поворачивая налево, пропустите встречный автомобиль, который едет прямо.' },
+  'b-tram': { spawn: { x: 4.5, z: -28, heading: north }, step: { kind: 'node', node: 'B', maneuver: 'left', slot: 'B', command: 'На перекрёстке поверните налево.' }, hint: 'Слева идёт трамвай. На равнозначном перекрёстке он проезжает первым, с какой бы стороны ни ехал.' },
+  'd-yield': { spawn: { x: -74, z: -60, heading: south }, step: { kind: 'node', node: 'D', maneuver: 'left', slot: 'D', command: 'Выезжайте на главную дорогу налево.' }, hint: 'Знак «Уступите дорогу»: пропустите машины на главной с обеих сторон, потом поворачивайте.' },
+  'd-stop': { spawn: { x: -74, z: -60, heading: south }, step: { kind: 'node', node: 'D', maneuver: 'left', slot: 'D', command: 'Выезжайте на главную дорогу налево.' }, hint: 'Знак «STOP»: полностью остановитесь передом у стоп-линии, даже если дорога пуста, затем уступите главной.' },
+  'a-regulator': { spawn: { x: 4.5, z: 62, heading: north }, step: { kind: 'node', node: 'A', maneuver: 'straight', slot: 'A1', command: 'На перекрёстке работает регулировщик. Двигайтесь прямо.' }, hint: 'Вы подъезжаете к регулировщику. Если он стоит к вам боком с вытянутыми руками — можно прямо и направо. Грудью или спиной — стойте.' },
+  'u-turn': { spawn: { x: -4.5, z: 24, heading: south }, step: { kind: 'uturn', slot: 'U', command: 'Развернитесь в удобном месте, где это разрешено.' }, hint: 'Включите левый поворотник, прижмитесь к середине дороги и разворачивайтесь, не задевая бордюр.' },
+};
+/** Order of the practice list: from the simplest and most frequent topics in the tickets to the hardest. */
+export const practiceOrder = ['a1-signal', 'a2-pedestrian', 'b-right-hand', 'b-oncoming', 'd-yield', 'd-stop', 'b-tram', 'a-regulator', 'u-turn'];
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 export function classifyManeuver(entryHeading: number, exitHeading: number): Maneuver {
@@ -160,9 +180,15 @@ export class ExamRunner {
   private slots = new Map<SlotId, 'active' | 'done'>();
 
   readonly selected: string[];
-  constructor(selected: string[]) {
-    this.selected = selected;
-    this.steps = buildRoute(selected);
+  /** Situation id when running a single practice situation instead of the full exam. */
+  readonly practice: string | null;
+  constructor(selected: string[], practice: string | null = null) {
+    this.selected = practice ? [practice] : selected;
+    this.practice = practice;
+    const scene = practice ? practiceScenes[practice] : null;
+    this.steps = scene ? [scene.step, { kind: 'end', command: 'Ситуация пройдена. Разберём, как получилось.' }] : buildRoute(selected);
+    if (scene?.step.slot) this.slots.set(scene.step.slot, 'active');
+    selected = this.selected;
     this.regulator = selected.includes('a-regulator');
     this.stopSign = selected.includes('d-stop');
     this.tram = selected.includes('b-tram');
@@ -180,19 +206,22 @@ export class ExamRunner {
   private advance(say: string[]) {
     const left = this.step.slot; if (left) this.slots.set(left, 'done');
     this.stepIndex++; this.announced = false;
+    if (this.step.kind === 'end') this.finished = true;
     const entered = this.step.slot; if (entered && !this.slots.has(entered)) this.slots.set(entered, 'active');
     this.announce(say);
   }
   /** Progress of a selected situation, derived from the route steps of every slot it occupies. */
   progress(id: string): SituationProgress {
+    // A practice run stages one slot of the situation; finishing it is the whole task.
+    if (this.practice) return this.finished && !this.failReason ? 'done' : 'active';
     const slots = byId(id)?.slots ?? [];
     if (slots.length && slots.every(slot => this.slots.get(slot) === 'done')) return 'done';
     return slots.some(slot => this.slots.has(slot)) ? 'active' : 'pending';
   }
-  private announce(say: string[]) { if (!this.announced && !this.finished) { this.announced = true; say.push(this.step.command); } }
+  private announce(say: string[]) { if (!this.announced && (!this.finished || this.step.kind === 'end')) { this.announced = true; say.push(this.step.command); } }
   private fail(frame: ExamFrame, detail: string, say: string[]) {
     frame.judge.record('route', frame.time, frame.state, detail, { situation: this.currentSituation() });
-    this.finished = true; this.failReason = detail; say.push('Вы отклонились от маршрута. Экзамен прекращён.');
+    this.finished = true; this.failReason = detail; say.push(this.practice ? 'Вы поехали не туда — ситуация не выполнена.' : 'Вы отклонились от маршрута. Экзамен прекращён.');
   }
 
   /** One fixed step. Returns phrases the inspector says. */
@@ -245,13 +274,14 @@ export class ExamRunner {
   private stage(frame: ExamFrame) {
     const { state, traffic } = frame, speed = Math.max(Math.abs(state.speed), 5), slot = this.step.slot;
     const once = (key: string, fn: () => void) => { if (!this.spawned.has(key)) { this.spawned.add(key); fn(); } };
-    if (slot === 'B' && state.z < -30) {
+    const moving = Math.abs(state.speed) > 1;
+    if (slot === 'B' && state.z < -30 && moving) {
       const eta = Math.max(0, state.z + 77) / speed;
       if (this.selected.includes('b-right-hand')) once('b', () => traffic.spawn(westAtB, Math.max(-76, -9 - eta * 9 - 2), { v0: 9, color: '#b5654f' }));
       if (this.selected.includes('b-oncoming')) once('b', () => traffic.spawn(southFromB, Math.max(-126, -93 - eta * 9 - 2), { v0: 9, color: '#5f7f9a' }));
       if (this.selected.includes('b-tram')) once('b', () => traffic.spawn(tramTrack, Math.max(-70, -9 - eta * 8 - 7.5), { v0: 8, kind: 'tram', halfLength: 7.5, color: '#d24d3c' }));
     }
-    if (slot === 'D' && state.z > -50 && state.x < -60 && (this.selected.includes('d-yield') || this.selected.includes('d-stop'))) {
+    if (slot === 'D' && state.z > -50 && state.x < -60 && moving && (this.selected.includes('d-yield') || this.selected.includes('d-stop'))) {
       const eta = Math.max(0, -10.5 - state.z) / speed + (this.stopSign ? 3 : 1);
       const lane = (id: string) => traffic.cars.find(c => c.lane.id === id)?.lane;
       once('d', () => {
@@ -261,7 +291,7 @@ export class ExamRunner {
         if (east) { const s = Math.max(-124, -78 - (eta + 2) * 11 - 2); if (free(east, s)) traffic.spawn(east, s, { color: '#9a7fa6' }); }
       });
     }
-    if (slot === 'A2' && this.selected.includes('a2-pedestrian') && state.x > -60 && state.z < 9) {
+    if (slot === 'A2' && this.selected.includes('a2-pedestrian') && state.x > -60 && state.z < 9 && moving) {
       once('peds', () => { this.pedestrians = [{ x: 7, z: CROSSWALK_Z - .5, dir: -1, speed: 1.25, waiting: false }, { x: -8.5, z: CROSSWALK_Z + .6, dir: 1, speed: 1, waiting: false }]; });
     }
   }

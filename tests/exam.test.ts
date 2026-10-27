@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyManeuver, compatible, ExamRunner, randomSelection, readySituations, situationOutcome } from '../src/game/exam.ts';
+import { classifyManeuver, compatible, ExamRunner, nodes, practiceOrder, practiceScenes, randomSelection, readySituations, situationOutcome, uTurnZone } from '../src/game/exam.ts';
 import { allowedManeuvers, sideOf } from '../src/game/regulator.ts';
 import { TripJudge } from '../src/game/rules.ts';
-import { cityMap, maneuverThrough } from '../src/game/roads.ts';
+import { cityMap, forwardOf, maneuverThrough, onRoad } from '../src/game/roads.ts';
 import { crossStreetLanes, TrafficSystem } from '../src/game/traffic.ts';
 import { initialVehicle, type VehicleState } from '../src/game/vehicle.ts';
 import { ruleTexts } from '../src/game/pddText.ts';
@@ -186,4 +186,40 @@ test('a two-slot situation stays unfinished after its first slot (partially driv
   assert.equal(ctx.exam.step.node, 'B');
   assert.equal(ctx.exam.progress('a-regulator'), 'active');
   assert.equal(situationOutcome(ctx.exam.progress('a-regulator'), 0), 'interrupted');
+});
+
+test('practice: every ready situation has a scene that starts on the road facing its place', () => {
+  assert.deepEqual([...practiceOrder].sort(), readySituations.map(s => s.id).sort());
+  for (const id of practiceOrder) {
+    const { spawn, step } = practiceScenes[id];
+    assert.ok(onRoad(cityMap, spawn), `${id} spawn on road`);
+    const target = step.node ? nodes[step.node] : uTurnZone, f = forwardOf(spawn.heading);
+    const dx = target.x - spawn.x, dz = target.z - spawn.z, ahead = dx * f.x + dz * f.z;
+    assert.ok(ahead > 0 && Math.hypot(dx, dz) < 90, `${id} faces its place`);
+  }
+});
+
+test('practice: driving through the situation ends the run as passed; a wrong turn ends it unfinished', () => {
+  const ok = { exam: new ExamRunner([], 'a1-signal'), judge: new TripJudge(cityMap), traffic: new TrafficSystem(crossStreetLanes(cityMap), {}) };
+  const v = car({ ...practiceScenes['a1-signal'].spawn, speed: 8 });
+  drive(ok, v, 10);
+  assert.equal(ok.exam.finished, true);
+  assert.equal(ok.exam.failReason, null);
+  assert.equal(situationOutcome(ok.exam.progress('a1-signal'), 0), 'passed');
+
+  const wrong = { exam: new ExamRunner([], 'b-oncoming'), judge: new TripJudge(cityMap), traffic: new TrafficSystem(crossStreetLanes(cityMap), {}) };
+  const w = car({ ...practiceScenes['b-oncoming'].spawn, speed: 8 });
+  let t = drive(wrong, w, 6.4);
+  w.heading = Math.PI / 2; drive(wrong, w, 2, t);
+  assert.equal(wrong.exam.finished, true);
+  assert.equal(situationOutcome(wrong.exam.progress('b-oncoming'), 0), 'interrupted');
+});
+
+test('practice: the staged participant appears only once the learner drives off', () => {
+  const ctx = { exam: new ExamRunner([], 'b-tram'), judge: new TripJudge(cityMap), traffic: new TrafficSystem(crossStreetLanes(cityMap), {}) };
+  const v = car({ ...practiceScenes['b-tram'].spawn, z: -31, speed: 0 });
+  drive(ctx, v, 2);
+  assert.equal(ctx.traffic.cars.length, 0);
+  v.speed = 5; drive(ctx, v, .1, 2);
+  assert.equal(ctx.traffic.cars.filter(c => c.kind === 'tram').length, 1);
 });

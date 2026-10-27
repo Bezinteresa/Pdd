@@ -5,7 +5,7 @@ import { DrivingEngine, type CameraMode, type GameSettings, type Look, type Tele
 import type { Gear } from './game/vehicle';
 import { lessons } from './game/lesson';
 import { lampLabel } from './game/signals';
-import { compatible, randomSelection, readySituations, situationOutcome, situations, type Situation, type SituationOutcome } from './game/exam';
+import { compatible, practiceOrder, practiceScenes, randomSelection, readySituations, situationOutcome, situations, type Situation, type SituationOutcome } from './game/exam';
 import { ruleTexts, PDD_EDITION } from './game/pddText';
 import type { Violation } from './game/rules';
 import SituationSchema from './SituationSchema.vue';
@@ -45,9 +45,36 @@ function save(key: string, value: unknown) { try { localStorage.setItem(key, JSO
 const storedSettings = readSaved<Partial<GameSettings>>('pdd-settings-v1', {});
 const settings = reactive<GameSettings>({ ...defaults, ...storedSettings, quality: ['low', 'balanced', 'high'].includes(storedSettings.quality || '') ? storedSettings.quality! : 'balanced', sensitivity: Math.max(.5, Math.min(1.5, Number(storedSettings.sensitivity) || 1)) });
 // Exam with the inspector: picked situations, live route state and the debrief after the finish.
-const showExamPicker = ref(false), showDebrief = ref(false);
+const showExamPicker = ref(false), showDebrief = ref(false), showPracticeList = ref(false);
 const examSelection = ref<string[]>(readSaved<string[]>('pdd-exam-selection-v1', []).filter(id => readySituations.some(s => s.id === id)));
 const examView = computed(() => telemetry.exam !== null);
+const practiceId = computed(() => telemetry.exam?.practice ?? null);
+const practiceSituation = computed(() => situations.find(s => s.id === practiceId.value) ?? null);
+// The practice list: the two lessons first, then situations ordered from the simplest to the hardest.
+type PracticeItem = { kind: 'lesson'; index: number; id: string; title: string; summary: string } | { kind: 'situation'; id: string; title: string; summary: string; topic: string };
+const practiceItems = computed<PracticeItem[]>(() => [
+  ...lessons.map((l, index) => ({ kind: 'lesson' as const, index, id: l.id, title: l.title, summary: l.summary })),
+  ...practiceOrder.map(id => situations.find(s => s.id === id)!).map(s => ({ kind: 'situation' as const, id: s.id, title: s.title, summary: s.summary, topic: s.topic })),
+]);
+function practiceStatus(item: PracticeItem): 'passed' | 'failed' | 'new' {
+  const best = item.kind === 'lesson' ? progress.lessonResults[item.id] : progress.practiceResults[item.id];
+  return best === undefined ? 'new' : best === 0 ? 'passed' : 'failed';
+}
+const statusLabel = { passed: 'Без ошибок', failed: 'С ошибками', new: 'Не пройдено' } as const;
+function openPracticeItem(item: PracticeItem) {
+  showPracticeList.value = false;
+  if (item.kind === 'lesson') { leaveExam(); selectLesson(item.index); return; }
+  startPractice(item.id);
+}
+function startPractice(id: string) {
+  if (!engine || !practiceScenes[id]) return;
+  showDebrief.value = false; showPracticeList.value = false; showExamPicker.value = false; examReport.value = null;
+  telemetry.exam = null; telemetry.violations = [];
+  engine.startPractice(id); steerDegrees.value = 0; looking.value = 'forward';
+  started.value = true; playing.value = true; engine.setPaused(false); (document.activeElement as HTMLElement | null)?.blur?.();
+}
+const practiceRuleTags = computed(() => (practiceSituation.value?.ruleIds ?? []).filter(id => ruleTexts[id]).slice(0, 2).map(id => ruleTexts[id].title.split(' «')[0]));
+const nextPractice = computed(() => { const i = practiceOrder.indexOf(practiceId.value ?? ''); return i >= 0 && i < practiceOrder.length - 1 ? practiceOrder[i + 1] : null; });
 const situationTopics = computed(() => [...new Set(situations.map(s => s.topic))].map(topic => ({ topic, items: situations.filter(s => s.topic === topic) })));
 const plannedCount = situations.filter(s => s.status === 'planned').length;
 const examReport = ref<{ passed: boolean; failReason: string | null; errors: number; cards: { situation: Situation; violations: Violation[]; outcome: SituationOutcome }[]; other: Violation[]; rules: string[] } | null>(null);
@@ -83,12 +110,18 @@ function buildReport() {
   const rules = [...new Set([...chosen.flatMap(s => s.ruleIds), ...violations.flatMap(v => v.ruleIds)])].filter(id => ruleTexts[id]);
   const passed = !exam.failReason && violations.length === 0 && cards.every(c => c.outcome === 'passed');
   examReport.value = { passed, failReason: exam.failReason, errors: violations.length, cards, other, rules };
+  if (exam.practice) {
+    // A practice result counts only when the situation was actually driven to the end.
+    const best = progress.practiceResults[exam.practice];
+    if (cards[0]?.outcome === 'passed' || cards[0]?.outcome === 'failed') progress.practiceResults[exam.practice] = Math.min(best ?? Infinity, violations.length);
+    return;
+  }
   if (passed) progress.examsPassed = (progress.examsPassed ?? 0) + 1;
   progress.examsTaken = (progress.examsTaken ?? 0) + 1;
 }
 watch(() => telemetry.exam?.finished, finished => { if (finished && !showDebrief.value) { pause(); buildReport(); showDebrief.value = true; } });
 // v1 saves lack lesson results; missing fields fall back to defaults so old progress survives.
-const progress = reactive({ lessons: 0, bestDistance: 0, theoryCorrect: [] as number[], lessonResults: {} as Record<string, number>, violations: 0, examsTaken: 0, examsPassed: 0, ...readSaved<object>('pdd-progress-v1', {}) });
+const progress = reactive({ lessons: 0, bestDistance: 0, theoryCorrect: [] as number[], lessonResults: {} as Record<string, number>, violations: 0, practiceResults: {} as Record<string, number>, examsTaken: 0, examsPassed: 0, ...readSaved<object>('pdd-progress-v1', {}) });
 const lessonIndex = ref(Math.max(0, lessons.findIndex(l => l.id === readSaved('pdd-lesson-v1', lessons[0].id))));
 const lesson = computed(() => lessons[lessonIndex.value]);
 const steps = computed(() => lesson.value.steps);
@@ -106,11 +139,11 @@ let wheelReturnFrame = 0;
 function notify(text: string) { message.value = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => message.value = '', 4200); }
 function applyCamera(mode: CameraMode) { cameraMode.value = mode; looking.value = 'forward'; engine?.setCamera(mode); }
 function look(value: Look) { looking.value = value; engine?.setLook(value); }
-const modals = (): ModalState => ({ help: showHelp.value, settings: showSettings.value, examPicker: showExamPicker.value, debrief: showDebrief.value });
+const modals = (): ModalState => ({ help: showHelp.value, settings: showSettings.value, examPicker: showExamPicker.value, practiceList: showPracticeList.value, debrief: showDebrief.value });
 // Resuming is refused while any dialog is open, so the car never drives on behind the exam picker or debrief.
 function play() { if (!engine || (!playing.value && !canResume(modals()))) return; (document.activeElement as HTMLElement | null)?.blur?.(); started.value = true; playing.value = !playing.value; engine.setPaused(!playing.value); clearControls(); }
 function pause() { playing.value = false; engine?.setPaused(true); clearControls(); }
-function reset() { pause(); engine?.reset(); steerDegrees.value = 0; previouslyCompleted = false; looking.value = 'forward'; }
+function reset() { if (practiceId.value) { startPractice(practiceId.value); pause(); return; } pause(); engine?.reset(); steerDegrees.value = 0; previouslyCompleted = false; looking.value = 'forward'; }
 // Driving controls act on touch-down: with one finger on the brake, mobile browsers often drop the click of a second tap.
 // Keyboard activation still arrives as a click with detail 0.
 function tap(event: Event, action: () => void) { if (event.type === 'pointerdown') { event.preventDefault(); action(); } else if ((event as MouseEvent).detail === 0) action(); }
@@ -170,12 +203,13 @@ function keyboard(event: KeyboardEvent) {
   if (action.close.includes('help')) showHelp.value = false;
   if (action.close.includes('settings')) showSettings.value = false;
   if (action.close.includes('examPicker')) showExamPicker.value = false;
+  if (action.close.includes('practiceList')) showPracticeList.value = false;
   if (action.togglePause && tab.value === 'practice') play();
 }
 watch(settings, value => { engine?.updateSettings(value); save('pdd-settings-v1', value); }, { deep: true });
 watch(progress, value => save('pdd-progress-v1', value), { deep: true });
 watch(tab, async value => { pause(); engine?.setSuspended(value !== 'practice'); if (value === 'practice') { await nextTick(); window.dispatchEvent(new Event('resize')); } });
-watch([showHelp, showSettings, showExamPicker, showDebrief], dialogs => { if (dialogs.some(Boolean)) pause(); });
+watch([showHelp, showSettings, showExamPicker, showDebrief, showPracticeList], dialogs => { if (dialogs.some(Boolean)) pause(); });
 onMounted(async () => {
   await nextTick();
   try {
@@ -232,7 +266,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
         <div v-if="telemetry.signalAhead" class="signal-ahead" :class="lampClass" :title="`Светофор впереди: ${lampLabel[telemetry.signalAhead.lamp]}`"><span class="lamp-r"></span><span class="lamp-y"></span><span class="lamp-g"></span><small>{{ Math.max(0, Math.round(telemetry.signalAhead.distance)) }} м</small></div>
         <div v-if="telemetry.violations.length" class="violation-chip" :title="telemetry.violations[telemetry.violations.length - 1].title"><Icon name="hazard" :size="14" />{{ telemetry.violations.length }}</div>
         <div v-if="looking !== 'forward'" class="return-look"><button class="glass-button" @click="look('forward')"><Icon name="camera" :size="16" /> Взгляд вперёд</button></div>
-        <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">ИНСПЕКТОР · {{ Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length) }}/{{ telemetry.exam.steps.length }}</span>{{ telemetry.exam.command }}</div>
+        <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">{{ practiceId ? `ПРАКТИКА · ${practiceSituation?.topic ?? ''}` : `ИНСПЕКТОР · ${Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length)}/${telemetry.exam.steps.length}` }}</span>{{ telemetry.exam.command }}<small v-if="practiceId && telemetry.speed < 6" class="inspector-hint">{{ practiceScenes[practiceId]?.hint }}</small></div>
         <div v-else-if="!examView && !telemetry.completed" class="inspector-bubble task-bubble" role="status"><span class="inspector-badge">ЗАДАНИЕ · {{ Math.min(telemetry.lessonStep + 1, steps.length) }}/{{ steps.length }}</span>{{ steps[Math.min(telemetry.lessonStep, steps.length - 1)] }}</div>
         <div v-if="message" class="toast" role="status">{{ message }}</div>
         <div v-if="fatal" class="fatal-state"><Icon name="hazard" :size="32" /><p>{{ fatal }}</p></div>
@@ -249,7 +283,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
           <div class="pedals-area"><div class="aux-controls"><button :class="{ engaged: telemetry.belt }" aria-label="Пристегнуть или отстегнуть ремень" @pointerdown="tap($event, toggleBelt)" @click="tap($event, toggleBelt)"><Icon name="belt" :size="18"/><span>Ремень</span><i></i></button><button :class="{ 'handbrake-on': telemetry.handbrake }" aria-label="Включить или снять ручник" @pointerdown="tap($event, toggleHandbrake)" @click="tap($event, toggleHandbrake)"><Icon name="brake" :size="18"/><span>Ручник</span><i></i></button></div><div class="pedals"><button class="pedal brake-pedal" :class="{ pressed: pedals.brake || telemetry.brake > 0 }" aria-label="Тормоз: удерживайте" @pointerdown="pedalDown($event, 'brake')" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="pedal-ribs"></span><strong>ТОРМОЗ</strong><small>S / ↓</small></button><button class="pedal gas-pedal" :class="{ pressed: shownGasLevel > 0 }" aria-label="Газ: чем выше палец на педали, тем сильнее нажатие" @pointerdown="pedalDown($event, 'throttle')" @pointermove="pedalMove" @pointerup="pedalUp" @pointercancel="pedalUp" @lostpointercapture="pedalUp"><span class="gas-scale" aria-hidden="true"><i v-for="level in GAS_LEVELS" :key="level" :class="{ lit: GAS_LEVELS - level < shownGasLevel }"></i></span><strong>ГАЗ</strong><small>W / ↑</small></button></div></div>
         </div>
 
-        <div v-if="!playing && !fatal" class="paused-label"><span>{{ started ? 'ПОЕЗДКА НА ПАУЗЕ' : 'ВСЁ НАЧИНАЕТСЯ С ПЕРВОГО МЕТРА' }}</span><div class="lesson-picker" aria-label="Выбор занятия"><button v-for="(item, index) in lessons" :key="item.id" :class="{ selected: lessonIndex === index }" @click="selectLesson(index)">{{ (index + 1).toString().padStart(2, '0') }} · {{ item.title }}</button><button class="exam-entry" :class="{ selected: examView }" @click="showExamPicker = true">Экзамен с инспектором</button></div><button @click="play"><Icon name="play" :size="17" />{{ started ? 'Продолжить' : 'За руль' }}</button></div>
+        <div v-if="!playing && !fatal" class="paused-label"><span>{{ started ? 'ПОЕЗДКА НА ПАУЗЕ' : 'ВСЁ НАЧИНАЕТСЯ С ПЕРВОГО МЕТРА' }}</span><div class="lesson-picker" aria-label="Выбор занятия"><button v-for="(item, index) in lessons" :key="item.id" :class="{ selected: lessonIndex === index }" @click="selectLesson(index)">{{ (index + 1).toString().padStart(2, '0') }} · {{ item.title }}</button><button class="practice-entry" :class="{ selected: !!practiceId }" @click="showPracticeList = true">Ситуации по очереди</button><button class="exam-entry" :class="{ selected: examView && !practiceId }" @click="showExamPicker = true">Экзамен с инспектором</button></div><button @click="play"><Icon name="play" :size="17" />{{ started ? 'Продолжить' : 'За руль' }}</button></div>
         <footer class="scene-footer"><span><i></i> {{ playing ? 'Поездка идёт' : 'Готов к поездке' }}</span><span>{{ telemetry.fps }} FPS <b>·</b> WEB 0.2</span></footer>
       </section>
 
@@ -258,10 +292,12 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
         <div class="lesson-progress"><span>Прогресс занятия <strong>{{ completion }}%</strong></span><div><i :style="{ width: `${completion}%` }"></i></div></div>
         <ol class="lesson-steps"><li v-for="(step, index) in steps" :key="step" :class="{ done: telemetry.lessonStep > index, current: telemetry.lessonStep === index }"><span class="step-circle"><Icon v-if="telemetry.lessonStep > index" name="check" :size="13"/><template v-else>{{ index + 1 }}</template></span><span>{{ step }}</span></li></ol>
         <div class="instructor-note"><span class="note-icon"><Icon :name="telemetry.completed ? 'flag' : 'help'" :size="18" /></span><div><strong>{{ telemetry.completed ? (telemetry.violations.length ? 'Есть над чем поработать' : 'Урок пройден!') : 'Подсказка инструктора' }}</strong><p>{{ instructorText }}</p></div></div>
+        </template><template v-else-if="practiceSituation"><div class="lesson-panel-top"><span class="eyebrow">ПРАКТИКА ПО СИТУАЦИЯМ · {{ practiceOrder.indexOf(practiceSituation.id) + 1 }}/{{ practiceOrder.length }}</span><h2>{{ practiceSituation.title }}</h2><p>{{ practiceSituation.summary }}</p><div class="lesson-tags"><span>{{ practiceSituation.topic }}</span><span v-for="tag in practiceRuleTags" :key="tag">{{ tag }}</span></div></div>
+        <div class="instructor-note"><span class="note-icon"><Icon name="help" :size="18" /></span><div><strong>Подсказка</strong><p>{{ practiceScenes[practiceSituation.id].hint }}</p></div></div>
         </template><template v-else><div class="lesson-panel-top"><span class="eyebrow">ПРАКТИЧЕСКИЙ ЭКЗАМЕН</span><h2>Экзамен<br>с инспектором</h2><p>Выполняйте команды инспектора. Ошибки разберём после финиша.</p><div class="lesson-tags"><span v-for="id in telemetry.exam!.selected" :key="id">{{ situations.find(s => s.id === id)?.topic }}</span></div></div>
         <ol class="lesson-steps exam-steps"><li v-for="(step, index) in telemetry.exam!.steps" :key="index" :class="{ done: telemetry.exam!.stepIndex > index, current: telemetry.exam!.stepIndex === index }"><span class="step-circle"><Icon v-if="telemetry.exam!.stepIndex > index" name="check" :size="13"/><template v-else>{{ index + 1 }}</template></span><span>{{ step.command }}</span></li></ol>
         </template><section class="trip-log" aria-label="Журнал поездки"><div class="trip-log-head"><span class="eyebrow">ЖУРНАЛ ПОЕЗДКИ</span><span>{{ telemetry.violations.length ? `${telemetry.violations.length} наруш.` : 'без нарушений' }}</span></div><ol v-if="telemetry.violations.length"><li v-for="item in [...telemetry.violations].reverse()" :key="item.id"><strong>{{ item.title }}</strong><p>{{ item.detail }}</p><small>{{ formatTime(item.time) }}<template v-if="item.rule"> · {{ item.rule }}</template></small></li></ol><p v-else class="trip-log-empty">Судья следит за ремнём, скоростью, сигналами светофора, поворотниками и выездом с проезжей части.</p></section>
-        <div class="lesson-actions"><button class="primary-button" @click="play"><Icon :name="playing ? 'pause' : 'play'" :size="17"/>{{ playing ? 'Приостановить' : started ? 'Продолжить поездку' : 'Начать занятие' }}</button><button class="reset-button" @click="reset"><Icon name="reset" :size="16"/>Начать заново</button><button class="reset-button" @click="examView ? leaveExam() : (showExamPicker = true)"><Icon name="flag" :size="16"/>{{ examView ? 'Выйти из экзамена' : 'Экзамен с инспектором' }}</button></div>
+        <div class="lesson-actions"><button class="primary-button" @click="play"><Icon :name="playing ? 'pause' : 'play'" :size="17"/>{{ playing ? 'Приостановить' : started ? 'Продолжить поездку' : 'Начать занятие' }}</button><button class="reset-button" @click="reset"><Icon name="reset" :size="16"/>Начать заново</button><button class="reset-button" @click="showPracticeList = true"><Icon name="drive" :size="16"/>Ситуации по очереди</button><button class="reset-button" @click="examView ? leaveExam() : (showExamPicker = true)"><Icon name="flag" :size="16"/>{{ practiceId ? 'Выйти из практики' : examView ? 'Выйти из экзамена' : 'Экзамен с инспектором' }}</button></div>
         <div class="prototype-note"><Icon name="drive" :size="17"/><p>Учебный прототип. Тексты пунктов ПДД — официальная редакция на 01.04.2024; оценка игровая, не официальная процедура ГИБДД.</p></div>
       </aside>
     </main>
@@ -271,7 +307,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
       <div class="theory-layout"><aside class="topic-list"><span class="eyebrow">ПОДГОТОВКА И УПРАВЛЕНИЕ</span><button v-for="(item, index) in questions" :key="item.topic" :class="{ active: questionIndex === index }" @click="questionIndex = index; selectedAnswer = null"><span>{{ (index + 1).toString().padStart(2, '0') }}</span>{{ item.topic }}<Icon v-if="progress.theoryCorrect.includes(index)" name="check" :size="16" /></button></aside><section class="question-card"><div class="question-top"><span>{{ question.topic }}</span><span>{{ questionIndex + 1 }} / {{ questions.length }}</span></div><div class="question-illustration"><span class="big-gear">{{ questionIndex === 1 || questionIndex === 2 ? 'D' : 'У' }}</span><div><small>ГОРОДСКАЯ АВТОШКОЛА</small><strong>{{ question.topic }}</strong></div><Icon name="drive" :size="84" /></div><h2>{{ question.question }}</h2><div class="answer-list"><button v-for="(option, index) in question.answers" :key="option" :disabled="selectedAnswer !== null" :class="{ correct: selectedAnswer !== null && index === question.correct, wrong: selectedAnswer === index && index !== question.correct }" @click="answer(index)"><span>{{ index + 1 }}</span>{{ option }}<Icon v-if="selectedAnswer !== null && index === question.correct" name="check" /></button></div><div v-if="selectedAnswer !== null" class="explanation"><strong>{{ selectedAnswer === question.correct ? 'Верно!' : 'Разберём ответ' }}</strong><p>{{ question.explanation }}</p></div><button v-if="selectedAnswer !== null" class="primary-button next-question" @click="nextQuestion">Следующий вопрос<Icon name="arrow" :size="17" /></button></section></div>
     </main>
 
-    <main v-if="tab === 'progress'" class="content-page progress-page"><div class="page-intro"><span class="eyebrow">МАЛЕНЬКИЕ ШАГИ — БОЛЬШОЙ ПУТЬ</span><h1>Ваш прогресс</h1><p>Результаты сохраняются в этом браузере на вашем устройстве.</p></div><div class="stat-grid"><div><Icon name="flag" :size="26"/><strong>{{ progress.lessons }}</strong><span>Успешных занятий</span></div><div><Icon name="drive" :size="26"/><strong>{{ progress.bestDistance }} <small>м</small></strong><span>Самая длинная поездка</span></div><div><Icon name="book" :size="26"/><strong>{{ progress.theoryCorrect.length }} <small>/ {{ questions.length }}</small></strong><span>Вопросов разобрано верно</span></div><div><Icon name="flag" :size="26"/><strong>{{ progress.examsPassed }} <small>/ {{ progress.examsTaken }}</small></strong><span>Экзаменов сдано</span></div></div><section v-for="(item, index) in lessons" :key="item.id" class="progress-lesson"><span class="progress-lesson-icon"><Icon :name="progress.lessonResults[item.id] === 0 ? 'check' : 'drive'" :size="38" /></span><div><span class="eyebrow">ПРАКТИКА · ЗАНЯТИЕ {{ (index + 1).toString().padStart(2, '0') }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }} {{ progress.lessonResults[item.id] === undefined ? 'Ещё не пройдено.' : progress.lessonResults[item.id] === 0 ? 'Пройдено без нарушений.' : `Лучший результат: нарушений — ${progress.lessonResults[item.id]}.` }}</p></div><button class="primary-button" @click="selectLesson(index); tab = 'practice'">За руль<Icon name="arrow" :size="16" /></button></section></main>
+    <main v-if="tab === 'progress'" class="content-page progress-page"><div class="page-intro"><span class="eyebrow">МАЛЕНЬКИЕ ШАГИ — БОЛЬШОЙ ПУТЬ</span><h1>Ваш прогресс</h1><p>Результаты сохраняются в этом браузере на вашем устройстве.</p></div><div class="stat-grid"><div><Icon name="flag" :size="26"/><strong>{{ progress.lessons }}</strong><span>Успешных занятий</span></div><div><Icon name="drive" :size="26"/><strong>{{ progress.bestDistance }} <small>м</small></strong><span>Самая длинная поездка</span></div><div><Icon name="book" :size="26"/><strong>{{ progress.theoryCorrect.length }} <small>/ {{ questions.length }}</small></strong><span>Вопросов разобрано верно</span></div><div><Icon name="flag" :size="26"/><strong>{{ progress.examsPassed }} <small>/ {{ progress.examsTaken }}</small></strong><span>Экзаменов сдано</span></div><div><Icon name="check" :size="26"/><strong>{{ practiceOrder.filter(id => progress.practiceResults[id] === 0).length }} <small>/ {{ practiceOrder.length }}</small></strong><span>Ситуаций без ошибок</span></div></div><section v-for="(item, index) in lessons" :key="item.id" class="progress-lesson"><span class="progress-lesson-icon"><Icon :name="progress.lessonResults[item.id] === 0 ? 'check' : 'drive'" :size="38" /></span><div><span class="eyebrow">ПРАКТИКА · ЗАНЯТИЕ {{ (index + 1).toString().padStart(2, '0') }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }} {{ progress.lessonResults[item.id] === undefined ? 'Ещё не пройдено.' : progress.lessonResults[item.id] === 0 ? 'Пройдено без нарушений.' : `Лучший результат: нарушений — ${progress.lessonResults[item.id]}.` }}</p></div><button class="primary-button" @click="selectLesson(index); tab = 'practice'">За руль<Icon name="arrow" :size="16" /></button></section></main>
 
     <div v-if="showHelp || showSettings" class="modal-backdrop" @click.self="showHelp = showSettings = false"><section class="modal" role="dialog" aria-modal="true" :aria-label="showHelp ? 'Управление' : 'Настройки'"><button class="modal-close icon-button" aria-label="Закрыть" @click="showHelp = showSettings = false"><Icon name="close"/></button><span class="eyebrow">ГОРОДСКАЯ АВТОШКОЛА</span><h2>{{ showHelp ? 'Всё под рукой' : 'Настроим под вас' }}</h2><template v-if="showHelp"><p>На телефоне вращайте руль пальцем. Газ и тормоз можно удерживать одновременно с рулением.</p><dl class="key-list"><div><dt>W / ↑</dt><dd>Газ</dd></div><div><dt>S / ↓</dt><dd>Тормоз</dd></div><div><dt>A / D</dt><dd>Руль влево / вправо</dd></div><div><dt>1 · 2 · 3 · 4</dt><dd>P · R · N · D</dd></div><div><dt>Q / E</dt><dd>Поворотники</dd></div><div><dt>Пробел / B / C</dt><dd>Ручник / ремень / камера</dd></div><div><dt>Esc</dt><dd>Пауза / продолжение</dd></div></dl><div class="info-banner">Для выхода из P удерживайте тормоз. Затем снимите ручник и плавно нажмите газ.</div></template><template v-else><label class="setting-row">Качество графики<select v-model="settings.quality"><option value="low">Экономичное</option><option value="balanced">Сбалансированное</option><option value="high">Высокое</option></select></label><label class="setting-row">Голос инспектора<input v-model="settings.voice" type="checkbox" /></label><label class="setting-row">Рабочие зеркала<input v-model="settings.mirrors" type="checkbox" /></label><label class="setting-row">Покачивание кузова<input v-model="settings.motion" type="checkbox" /></label><label class="setting-row">Чувствительность руля<input v-model.number="settings.sensitivity" type="range" min="0.5" max="1.5" step="0.1" /></label><p class="settings-note">Если игра замедляется, выберите экономичное качество. Зеркала показывают настоящую обстановку с отдельных камер.</p></template><button class="primary-button" @click="showHelp = showSettings = false">Понятно<Icon name="check" :size="16" /></button></section></div>
     <div v-if="showExamPicker" class="modal-backdrop" @click.self="showExamPicker = false"><section class="modal exam-modal" role="dialog" aria-modal="true" aria-label="Экзамен с инспектором">
@@ -286,10 +322,22 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
       <details class="exam-planned"><summary>Готовим ещё {{ plannedCount }} ситуаций из билетов</summary><ul><li v-for="item in situations.filter(s => s.status === 'planned')" :key="item.id"><strong>{{ item.title }}</strong> — {{ item.summary }}</li></ul></details>
       <div class="exam-actions"><button class="reset-button" @click="randomExam"><Icon name="reset" :size="16"/>Случайные 3–4</button><button class="primary-button" :disabled="examSelection.length === 0" @click="startExam"><Icon name="play" :size="16"/>Начать экзамен ({{ examSelection.length }})</button></div>
     </section></div>
+    <div v-if="showPracticeList" class="modal-backdrop" @click.self="showPracticeList = false"><section class="modal exam-modal" role="dialog" aria-modal="true" aria-label="Ситуации по очереди">
+      <button class="modal-close icon-button" aria-label="Закрыть" @click="showPracticeList = false"><Icon name="close"/></button>
+      <span class="eyebrow">ПРАКТИКА</span><h2>Ситуации по очереди</h2>
+      <p>Выберите ситуацию — машина сразу окажется перед нужным местом. Одна команда, подсказка перед въездом и короткий разбор.</p>
+      <ol class="practice-list">
+        <li v-for="(item, index) in practiceItems" :key="item.id"><button class="practice-item" :class="practiceStatus(item)" @click="openPracticeItem(item)">
+          <span class="practice-index">{{ (index + 1).toString().padStart(2, '0') }}</span>
+          <span class="practice-text"><strong>{{ item.title }}</strong><small>{{ item.kind === 'lesson' ? 'Урок' : item.topic }} · {{ item.summary }}</small></span>
+          <span class="practice-status">{{ statusLabel[practiceStatus(item)] }}</span>
+        </button></li>
+      </ol>
+    </section></div>
     <div v-if="showDebrief && examReport" class="modal-backdrop"><section class="modal exam-modal debrief" role="dialog" aria-modal="true" aria-label="Разбор экзамена">
-      <span class="eyebrow">РАЗБОР ЭКЗАМЕНА</span>
-      <h2 :class="examReport.passed ? 'verdict-ok' : 'verdict-fail'">{{ examReport.passed ? 'Экзамен сдан' : 'Экзамен не сдан' }}</h2>
-      <p>{{ examReport.failReason ? `Экзамен прекращён: ${examReport.failReason}` : examReport.passed ? 'Ни одной ошибки. Так держать!' : `Ошибок: ${examReport.errors}. Ниже — где и почему.` }}</p>
+      <span class="eyebrow">{{ practiceId ? 'РАЗБОР СИТУАЦИИ' : 'РАЗБОР ЭКЗАМЕНА' }}</span>
+      <h2 :class="examReport.passed ? 'verdict-ok' : 'verdict-fail'">{{ practiceId ? (examReport.passed ? 'Ситуация пройдена' : examReport.failReason ? 'Ситуация не выполнена' : 'Есть ошибки') : (examReport.passed ? 'Экзамен сдан' : 'Экзамен не сдан') }}</h2>
+      <p>{{ examReport.failReason ? `${practiceId ? 'Остановлено' : 'Экзамен прекращён'}: ${examReport.failReason}` : examReport.passed ? 'Ни одной ошибки. Так держать!' : `Ошибок: ${examReport.errors}. Ниже — где и почему.` }}</p>
       <article v-for="card in examReport.cards" :key="card.situation.id" class="debrief-card" :class="[card.outcome, { failed: card.violations.length }]">
         <div class="debrief-schema"><SituationSchema v-if="card.situation.schema" :schema="card.situation.schema" /></div>
         <div class="debrief-body"><h3><Icon :name="card.outcome === 'passed' ? 'check' : card.violations.length ? 'hazard' : 'flag'" :size="16" />{{ card.situation.title }}</h3><p>{{ card.situation.summary }}</p>
@@ -301,7 +349,8 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
         <div v-for="v in examReport.other" :key="v.id" class="debrief-error"><img v-if="snapshot(v.id)" :src="snapshot(v.id)" alt="Вид сверху в момент ошибки" /><div><strong>{{ v.title }}</strong><p>{{ v.detail }}</p><small>{{ formatTime(v.time) }}<template v-if="v.rule"> · {{ v.rule }}</template></small></div></div>
       </div></article>
       <section class="debrief-rules"><h3>Что говорят Правила</h3><p class="rules-edition">Текст ПДД РФ, {{ PDD_EDITION }}</p><details v-for="id in examReport.rules" :key="id"><summary>{{ ruleTexts[id].title }}</summary><p>{{ ruleTexts[id].text }}</p></details></section>
-      <div class="exam-actions"><button class="reset-button" @click="leaveExam"><Icon name="close" :size="16"/>Закрыть</button><button class="reset-button" @click="showDebrief = false; showExamPicker = true">Другие ситуации</button><button class="primary-button" @click="startExam"><Icon name="reset" :size="16"/>Пересдать</button></div>
+      <div v-if="practiceId" class="exam-actions"><button class="reset-button" @click="showDebrief = false; showPracticeList = true"><Icon name="drive" :size="16"/>К списку</button><button class="reset-button" @click="startPractice(practiceId)"><Icon name="reset" :size="16"/>Повторить</button><button v-if="nextPractice" class="primary-button" @click="startPractice(nextPractice)">Следующая ситуация<Icon name="arrow" :size="16"/></button></div>
+      <div v-else class="exam-actions"><button class="reset-button" @click="leaveExam"><Icon name="close" :size="16"/>Закрыть</button><button class="reset-button" @click="showDebrief = false; showExamPicker = true">Другие ситуации</button><button class="primary-button" @click="startExam"><Icon name="reset" :size="16"/>Пересдать</button></div>
     </section></div>
     <div class="rotate-device"><Icon name="full" :size="38"/><h2>Поверните устройство</h2><p>Для вождения нужен горизонтальный экран.</p></div>
   </div>

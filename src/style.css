@@ -184,3 +184,20 @@
 @media(max-width:900px){.inspector-bubble{font-size:15px;max-width:56%}}
 @media(max-height:600px) and (orientation:landscape){.inspector-bubble{top:6px;font-size:14px;line-height:1.25;padding:6px 12px 8px;max-width:54%}.inspector-badge{font-size:8px;margin-bottom:1px}}
 @media(max-width:900px),(max-height:600px) and (orientation:landscape){.simulator.has-bubble .scene-heading{display:none}}
+
+/* Practice by situation */
+.paused-label .lesson-picker button.practice-entry{background:#3f6147e6;color:#f4f8e4}
+.paused-label .lesson-picker button.practice-entry.selected{background:#d9e9b9;color:#284d3e}
+.inspector-hint{display:block;font-size:.72em;font-weight:500;line-height:1.35;color:#5f7552;margin-top:5px}
+.practice-list{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
+.practice-item{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:#fff}
+.practice-item:hover{border-color:#9fb08f}
+.practice-index{flex:0 0 30px;height:30px;border-radius:8px;display:grid;place-items:center;background:#eef2e5;color:#4f6a45;font-weight:650;font-size:12px}
+.practice-text{flex:1;min-width:0}
+.practice-text strong{display:block;font-size:13px;font-weight:600;color:#2e4b34}
+.practice-text small{display:block;font-size:10.5px;line-height:1.45;color:#8b9285;margin-top:2px}
+.practice-status{flex-shrink:0;font-size:10px;font-weight:600;padding:4px 8px;border-radius:12px;background:#f0f1ea;color:#8b9285}
+.practice-item.passed .practice-index{background:#d9e9b9;color:#2f5a2a}
+.practice-item.passed .practice-status{background:#e3f0cf;color:#3f7f3a}
+.practice-item.failed .practice-status{background:#f8e3dc;color:#a5402f}
+@media(max-height:600px) and (orientation:landscape){.practice-item{padding:8px 10px;gap:9px}.practice-text small{display:none}.practice-index{flex-basis:26px;height:26px}}

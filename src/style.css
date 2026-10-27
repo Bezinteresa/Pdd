@@ -177,3 +177,10 @@
 @media(max-width:1150px){.control-deck.chase .center-controls{margin-left:10px}}
 @media(max-height:600px) and (orientation:landscape){.steering-area .signal-controls{height:22px;margin-bottom:3px}.tacho{height:160%}.control-deck.chase .center-controls{margin-left:8px}}
 @media(max-height:600px) and (orientation:landscape){.steering-area{flex-basis:112px;width:112px}.steering-wheel{width:108px;height:108px}.steering-area .signal-controls{height:20px;margin-bottom:2px}.steering-area .gear-selector{margin-bottom:2px}}
+
+/* Larger inspector and task text: readable at a glance while driving, especially on phones */
+.inspector-bubble{font-size:17px;line-height:1.3;padding:10px 18px 12px;max-width:min(620px,52%)}
+.inspector-badge{font-size:10px}
+@media(max-width:900px){.inspector-bubble{font-size:15px;max-width:56%}}
+@media(max-height:600px) and (orientation:landscape){.inspector-bubble{top:6px;font-size:14px;line-height:1.25;padding:6px 12px 8px;max-width:54%}.inspector-badge{font-size:8px;margin-bottom:1px}}
+@media(max-width:900px),(max-height:600px) and (orientation:landscape){.simulator.has-bubble .scene-heading{display:none}}

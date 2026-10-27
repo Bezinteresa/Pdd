@@ -216,7 +216,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearTimeout(fsHintTimer); doc
     </header>
 
     <main v-show="tab === 'practice'" class="practice-layout">
-      <section class="simulator" aria-label="Симулятор вождения" @mousedown="keepKeyboard">
+      <section class="simulator" :class="{ 'has-bubble': examView ? !telemetry.exam?.finished : !telemetry.completed }" aria-label="Симулятор вождения" @mousedown="keepKeyboard">
         <div ref="canvasHost" class="canvas-host"></div>
         <div class="scene-heading"><span class="eyebrow">ПРАКТИЧЕСКОЕ ЗАНЯТИЕ</span><h1>{{ examView ? 'Экзамен с инспектором' : lesson.heading }}</h1><div class="location"><Icon name="pin" :size="14" /> Учебный квартал <span>•</span> Сухая дорога <Icon name="sun" :size="14" /></div></div>
         <div v-if="fsHint" class="fs-hint" aria-hidden="true"><span class="fs-hint-frame"></span><span class="fs-hint-label">На весь экран</span></div><div class="scene-tools"><button class="glass-button" aria-label="Помощь по управлению" @click="showHelp = true"><Icon name="help" /></button><button class="glass-button fullscreen-button" :class="{ hinted: fsHint }" aria-label="Полный экран" @click="fullscreen"><Icon name="full" /></button></div>

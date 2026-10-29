@@ -452,3 +452,7 @@ body{background:#fbf5ea}
 @keyframes hint-pulse{0%,100%{box-shadow:0 0 0 0 #ff8c6bcc,0 0 0 3px #ff8c6b;filter:brightness(1)}50%{box-shadow:0 0 0 9px #ff8c6b00,0 0 0 3px #ffd166;filter:brightness(1.18)}}
 .hint-pulse{animation:hint-pulse 1s ease-in-out infinite;position:relative;z-index:2}
 @media(prefers-reduced-motion:reduce){.hint-pulse{animation:none;box-shadow:0 0 0 3px #ff8c6b}}
+/* Mouse drag scrolling (src/dragScroll.ts): no text selection while dragging. */
+.drag-scrolling,.drag-scrolling *{cursor:grabbing!important;user-select:none!important}
+/* In-scene pause menu: restart the drive from the same place. */
+.paused-label>button.restart-entry{padding:8px 16px;font-size:12px;background:#fffaf2cc;color:var(--ink);box-shadow:0 3px 0 #e2d3b8}

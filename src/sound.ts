@@ -5,6 +5,14 @@ export class SoundBoard {
   private ctx: AudioContext | null = null;
   private engineGain: GainNode | null = null;
   private engineOsc: OscillatorNode | null = null;
+  private held = false;
+
+  /** Silences everything while the host page takes over (ad, hidden tab); a tap meanwhile does not wake the sound. */
+  hold(value: boolean) {
+    this.held = value;
+    if (!this.ctx) return;
+    if (value) void this.ctx.suspend(); else if (this.ctx.state === 'suspended') void this.ctx.resume();
+  }
 
   /** Call from a user gesture (tap, key). Safe to call repeatedly. */
   unlock() {
@@ -14,9 +22,10 @@ export class SoundBoard {
       const ctx = new Ctx(), osc = ctx.createOscillator(), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
       osc.type = 'sawtooth'; filter.type = 'lowpass'; filter.frequency.value = 420; gain.gain.value = 0;
       osc.connect(filter).connect(gain).connect(ctx.destination); osc.start();
+      if (this.held) void ctx.suspend();
       this.ctx = ctx; this.engineOsc = osc; this.engineGain = gain;
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx.state === 'suspended' && !this.held) void this.ctx.resume();
   }
 
   /** Engine note follows rpm (firing frequency of a four-cylinder engine); silent when stopped or muted. */

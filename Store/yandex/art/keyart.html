@@ -1,0 +1,111 @@
+<!doctype html>
+<!-- Key art for the store: icon, maskable icon, cover and showcase cover. Open with ?mode=icon|maskable|cover|showcase;
+     render.mjs screenshots each mode at its exact size. Flat vector in the game's "toy town" palette, not a game screenshot. -->
+<html lang="ru"><head><meta charset="UTF-8"><title>Key art</title>
+<style>
+html,body{margin:0;overflow:hidden;background:#bfe6f5}
+svg{display:block}
+.title{font-family:'Segoe UI',Arial,sans-serif;font-weight:800;fill:#fffaf2;stroke:#2e3a4f;paint-order:stroke;stroke-linejoin:round;letter-spacing:-.5px}
+</style></head><body>
+<script>
+const mode = new URLSearchParams(location.search).get('mode') || 'cover';
+const size = { icon: [512, 512], maskable: [512, 512], cover: [800, 470], showcase: [1560, 520] }[mode];
+const [W, H] = size;
+const C = { sky1: '#a9dcf2', sky2: '#e4f5fb', grass: '#b9e09a', grass2: '#a6d488', road: '#8e98a4', walk: '#f3dfbf', cream: '#f8e6c4', cream2: '#ecd3a5', ink: '#2e3a4f', coral: '#ff8c6b', coralDeep: '#e2694a', mint: '#d8f0e1', glass: '#5d7d92' };
+
+// Toy-town block: wall, roof and a grid of mint windows.
+function building(x, y, w, h, wall, roof) {
+  let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${wall}"/>` +
+    `<polygon points="${x - 6},${y} ${x + w + 6},${y} ${x + w - 10},${y - h * .16} ${x + 10},${y - h * .16}" fill="${roof}"/>`;
+  const cols = Math.max(2, Math.round(w / 34)), rows = Math.max(2, Math.round(h / 40)), cw = w / cols, rh = h / rows;
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows - .3; j++)
+    s += `<rect x="${x + i * cw + cw * .25}" y="${y + j * rh + rh * .28}" width="${cw * .5}" height="${rh * .42}" rx="2" fill="#bfeadf" opacity=".95"/>`;
+  return s;
+}
+function cloud(x, y, k) { return `<g fill="#fff" opacity=".9"><ellipse cx="${x}" cy="${y}" rx="${46 * k}" ry="${20 * k}"/><ellipse cx="${x - 30 * k}" cy="${y + 6 * k}" rx="${30 * k}" ry="${15 * k}"/><ellipse cx="${x + 26 * k}" cy="${y - 10 * k}" rx="${28 * k}" ry="${20 * k}"/></g>`; }
+
+// Street scene: horizon at hy, road to a vanishing point at vx, buildings on both sides.
+function scene(vx, hy, spread) {
+  let s = `<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${C.sky1}"/><stop offset="1" stop-color="${C.sky2}"/></linearGradient>` +
+    `<linearGradient id="shade" x1="0" y1="0" x2="0" y2="1"><stop offset=".45" stop-color="#1c2533" stop-opacity="0"/><stop offset="1" stop-color="#1c2533" stop-opacity=".62"/></linearGradient>` +
+    `<radialGradient id="glow"><stop offset="0" stop-color="#9ff0b4"/><stop offset="1" stop-color="#9ff0b4" stop-opacity="0"/></radialGradient></defs>` +
+    `<rect width="${W}" height="${H}" fill="url(#sky)"/>`;
+  s += cloud(W * .16, hy * .3, H / 520) + cloud(W * .8, hy * .2, H / 600) + cloud(W * .55, hy * .12, H / 900);
+  const palette = [['#ffd27a', C.coral], ['#f7b98f', '#e8795a'], ['#c9b6e8', '#9a86c9'], ['#ffe0a3', '#f08a5d'], ['#a8dcc8', '#5fae92']];
+  let i = 0;
+  for (let x = -40; x < vx - spread * .9; x += 150 * H / 520) { const [w, r] = palette[i++ % 5], bh = (110 + (i * 37) % 70) * H / 520; s += building(x, hy - bh, 130 * H / 520, bh, w, r); }
+  for (let x = W + 40 - 130 * H / 520; x > vx + spread * .9; x -= 150 * H / 520) { const [w, r] = palette[i++ % 5], bh = (110 + (i * 53) % 70) * H / 520; s += building(x, hy - bh, 130 * H / 520, bh, w, r); }
+  s += `<rect y="${hy}" width="${W}" height="${H - hy}" fill="${C.grass}"/>`;
+  const far = spread * .18, bottom = spread * 1.9;
+  s += `<polygon points="${vx - far - 14},${hy} ${vx + far + 14},${hy} ${vx + bottom + 70},${H} ${vx - bottom - 70},${H}" fill="${C.walk}"/>`;
+  s += `<polygon points="${vx - far},${hy} ${vx + far},${hy} ${vx + bottom},${H} ${vx - bottom},${H}" fill="${C.road}"/>`;
+  // Centre dashes and a zebra crossing in perspective.
+  for (let t = .08; t < 1; t += .17) { const y1 = hy + (H - hy) * t, y2 = hy + (H - hy) * (t + .07), w1 = 2 + 10 * t, w2 = 2 + 10 * (t + .07);
+    s += `<polygon points="${vx - w1 / 2},${y1} ${vx + w1 / 2},${y1} ${vx + w2 / 2},${y2} ${vx - w2 / 2},${y2}" fill="#fff" opacity=".85"/>`; }
+  const zt = .16, zy = hy + (H - hy) * zt, zh = (H - hy) * .05, zw = far + (bottom - far) * zt;
+  for (let k = -5; k <= 5; k++) { const x = vx + k * zw / 5.5; s += `<polygon points="${x - zw / 16},${zy} ${x + zw / 16},${zy} ${x + zw / 14},${zy + zh} ${x - zw / 14},${zy + zh}" fill="#fff" opacity=".9"/>`; }
+  return s;
+}
+
+// Learner car seen from the front, with the triangular "У" sign on the roof. Drawn in a 440x520 box (origin top-left).
+function car() {
+  return `<ellipse cx="220" cy="505" rx="250" ry="22" fill="#000" opacity=".16"/>
+  <rect x="38" y="400" width="74" height="100" rx="20" fill="${C.ink}"/><rect x="328" y="400" width="74" height="100" rx="20" fill="${C.ink}"/>
+  <polygon points="62,268 112,128 328,128 378,268" fill="${C.cream}"/>
+  <polygon points="88,258 128,146 312,146 352,258" fill="${C.glass}"/>
+  <polygon points="128,146 176,146 112,258 88,258" fill="#fff" opacity=".18"/><polygon points="196,146 222,146 150,258 124,258" fill="#fff" opacity=".12"/>
+  <path d="M150 258 a46 46 0 0 1 92 0" fill="none" stroke="${C.ink}" stroke-width="9" opacity=".55"/>
+  <rect x="108" y="116" width="224" height="20" rx="9" fill="${C.cream2}"/>
+  <rect x="200" y="96" width="40" height="24" rx="5" fill="${C.ink}"/>
+  <polygon points="220,8 150,104 290,104" fill="#fff" stroke="${C.coralDeep}" stroke-width="13" stroke-linejoin="round"/>
+  <text x="220" y="94" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-weight="900" font-size="62" fill="${C.ink}">У</text>
+  <rect x="14" y="232" width="48" height="30" rx="10" fill="${C.cream2}"/><rect x="378" y="232" width="48" height="30" rx="10" fill="${C.cream2}"/>
+  <rect x="20" y="262" width="400" height="190" rx="46" fill="${C.cream}"/>
+  <rect x="20" y="262" width="400" height="34" rx="17" fill="#fff" opacity=".25"/>
+  <circle cx="86" cy="330" r="38" fill="#fffbea" stroke="${C.cream2}" stroke-width="9"/><circle cx="86" cy="330" r="17" fill="#fff6c4"/>
+  <circle cx="354" cy="330" r="38" fill="#fffbea" stroke="${C.cream2}" stroke-width="9"/><circle cx="354" cy="330" r="17" fill="#fff6c4"/>
+  <rect x="150" y="306" width="140" height="50" rx="18" fill="${C.cream2}"/>
+  <rect x="166" y="320" width="108" height="7" rx="3.5" fill="${C.ink}" opacity=".25"/><rect x="166" y="336" width="108" height="7" rx="3.5" fill="${C.ink}" opacity=".25"/>
+  <rect x="30" y="378" width="40" height="18" rx="6" fill="${C.coral}"/><rect x="370" y="378" width="40" height="18" rx="6" fill="${C.coral}"/>
+  <rect x="8" y="406" width="424" height="58" rx="26" fill="${C.cream2}"/>
+  <rect x="166" y="414" width="108" height="38" rx="7" fill="#fff" stroke="${C.ink}" stroke-width="4"/>
+  <rect x="180" y="428" width="80" height="9" rx="4" fill="${C.ink}" opacity=".35"/>`;
+}
+// Traffic light on a pole, green lit. Box 70x420.
+function trafficLight() {
+  return `<rect x="29" y="120" width="12" height="300" fill="${C.ink}"/>
+  <rect x="0" y="0" width="70" height="170" rx="18" fill="${C.ink}"/>
+  <circle cx="35" cy="34" r="19" fill="#7a4a48"/><circle cx="35" cy="85" r="19" fill="#7a6a48"/>
+  <circle cx="35" cy="136" r="44" fill="url(#glow)"/><circle cx="35" cy="136" r="19" fill="#6fe08e"/><circle cx="29" cy="130" r="6" fill="#fff" opacity=".7"/>`;
+}
+// Pedestrian crossing sign (5.19) on a pole. Box 90x330.
+function crossingSign() {
+  return `<rect x="39" y="80" width="12" height="250" fill="${C.ink}"/>
+  <rect x="0" y="0" width="90" height="90" rx="8" fill="#2f6fd0" stroke="#fff" stroke-width="5"/>
+  <polygon points="45,12 80,76 10,76" fill="#fff"/>
+  <g fill="${C.ink}"><circle cx="48" cy="34" r="5"/><path d="M45 41 l-7 13 l-6 12 h6 l5 -10 l4 4 l-2 10 h6 l2 -13 l-4 -6 l3 -7 l5 5 h7 v-5 h-5 l-7 -7 z"/></g>
+  <rect x="22" y="68" width="46" height="4" fill="${C.ink}"/>`;
+}
+const at = (x, y, k, svg) => `<g transform="translate(${x} ${y}) scale(${k})">${svg}</g>`;
+function title(text, x, y, fs, anchor = 'middle') { return `<text class="title" x="${x}" y="${y}" font-size="${fs}" text-anchor="${anchor}" stroke-width="${fs / 7}">${text}</text>`; }
+
+let body = '';
+if (mode === 'icon' || mode === 'maskable') {
+  // Icon: the learner car fills the frame on a street, no text. Maskable keeps everything inside the central circle.
+  const k = mode === 'icon' ? .98 : .7;
+  body = scene(256, 250, 70) + at(406 - (1 - k) * 60, 120 + (1 - k) * 160, k * .62, trafficLight());
+  body += at(256 - 220 * k * .95, 512 - 520 * k * .95 - (mode === 'icon' ? 18 : 70), k * .95, car());
+} else if (mode === 'cover') {
+  body = scene(400, 250, 90) + at(78, 150, .62, crossingSign()) + at(640, 96, .78, trafficLight());
+  body += at(400 - 220 * .62, 72, .62, car());
+  body += `<rect width="${W}" height="${H}" fill="url(#shade)"/>` + title('Городская автошкола', W / 2, H - 34, 62);
+} else {
+  body = scene(1080, 270, 120) + at(830, 160, .7, crossingSign()) + at(1380, 92, .86, trafficLight());
+  body += at(1080 - 220 * .8, 92, .8, car());
+  body += `<rect width="${W}" height="${H}" fill="url(#shade)" opacity=".55"/>` +
+    `<defs><linearGradient id="side" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1c2533" stop-opacity=".34"/><stop offset=".5" stop-color="#1c2533" stop-opacity="0"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#side)"/>` + title('Городская', 70, 238, 96, 'start') + title('автошкола', 70, 340, 96, 'start') +
+    `<text x="74" y="404" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="600" fill="#fffaf2" stroke="#2e3a4f" stroke-width="6" paint-order="stroke">Вождение по городу и билеты ПДД</text>`;
+}
+document.body.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
+</script>
+</body></html>

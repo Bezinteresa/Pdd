@@ -75,6 +75,35 @@ export function parkedCar(scene: THREE.Scene, x: number, z: number, color: strin
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .5, .62, sx * .86, .35, sz * 1.2, '#263431');
   obstacles.push({ x, z, halfX: .95, halfZ: 2 });
 }
+/**
+ * A flat band along a polyline, `lateral` metres right of it, `width` wide, at height `y` — a curved road and its markings.
+ * With `dashes` [length, gap] it is drawn as dashes.
+ */
+export function ribbon(scene: THREE.Scene, path: { x: number; z: number }[], lateral: number, width: number, y: number, color: string, dashes?: [number, number]) {
+  const pos: number[] = [], index: number[] = [];
+  const pieces: { x: number; z: number }[][] = [];
+  if (!dashes) pieces.push(path);
+  else {
+    // Cut the line into dashes by distance along it.
+    let run: { x: number; z: number }[] = [], along = 0;
+    for (let i = 0; i < path.length; i++) {
+      if (i) along += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+      const on = along % (dashes[0] + dashes[1]) < dashes[0];
+      if (on) run.push(path[i]); else if (run.length > 1) { pieces.push(run); run = []; } else run = [];
+    }
+    if (run.length > 1) pieces.push(run);
+  }
+  for (const piece of pieces) for (let i = 0; i < piece.length; i++) {
+    const a = piece[Math.max(0, i - 1)], b = piece[Math.min(piece.length - 1, i + 1)], l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const rx = -(b.z - a.z) / l, rz = (b.x - a.x) / l, cx = piece[i].x + rx * lateral, cz = piece[i].z + rz * lateral, base = pos.length / 3;
+    pos.push(cx - rx * width / 2, y, cz - rz * width / 2, cx + rx * width / 2, y, cz + rz * width / 2);
+    if (i) index.push(base - 2, base - 1, base, base - 1, base + 1, base);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geometry.setIndex(index); geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, material(color)); mesh.receiveShadow = true; scene.add(mesh);
+  return mesh;
+}
 /** Roundabout island: a kerb ring, grass and a tree in the middle. */
 export function island(scene: THREE.Scene, x: number, z: number, radius: number) {
   const kerb = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, .28, 40), material('#c0c5b5')); kerb.position.set(x, .14, z); scene.add(kerb);

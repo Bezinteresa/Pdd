@@ -10,11 +10,11 @@ const city = buildCity();
 
 test('city graph: 7×7 grid and the ring road, connected, with the planned crossing kinds', () => {
   const nodes = Object.values(city.nodes);
-  assert.equal(nodes.length, 49 + 32);
-  assert.equal(city.edges.length, 84 + 12 + 32);
+  assert.equal(nodes.length, 49 + 12);
+  assert.equal(city.edges.length, 84 + 12 + 12);
   const seen = new Set([nodes[0].id]), queue = [nodes[0].id];
   while (queue.length) for (const next of city.nodes[queue.shift()!].links) if (!seen.has(next)) { seen.add(next); queue.push(next); }
-  assert.equal(seen.size, 81);
+  assert.equal(seen.size, 61);
   const kinds = (k: string) => nodes.filter(n => n.kind === k).map(n => n.id).sort();
   assert.deepEqual(kinds('signal'), ['n0_-180', 'n0_-90', 'n0_0', 'n0_180', 'n0_90']);
   assert.deepEqual(kinds('main'), ['n-180_-90', 'n-90_-90', 'n180_-90', 'n90_-90']);
@@ -71,12 +71,35 @@ test('route: any five ready situations get their own places and a connected orde
 });
 
 test('ring road: priority for the ring, 70 km/h after each junction', () => {
-  const onRing = signsAhead(city.signs, { x: 360 - 4, z: -20, heading: Math.PI }).map(s => s.sign.code);
+  // Southbound on the east side of the ring, just before the junction with the avenue z = 0 at x 388.
+  const onRing = signsAhead(city.signs, { x: 388 - 6, z: -10, heading: Math.PI }).map(s => s.sign.code);
   assert.ok(onRing.includes('3.24'), onRing.join());
-  const joining = signsAhead(city.signs, { x: 320, z: 4, heading: Math.PI / 2 }).map(s => s.sign.code);
+  const joining = signsAhead(city.signs, { x: 340, z: 6, heading: Math.PI / 2 }).map(s => s.sign.code);
   assert.ok(joining.includes('2.4'), joining.join());
-  assert.equal(speedLimitAt(city.map, { x: 356, z: 40, heading: Math.PI }), 70);
-  assert.equal(speedLimitAt(city.map, { x: 320, z: 4, heading: Math.PI / 2 }), 60);
+  assert.equal(speedLimitAt(city.map, { x: 382, z: 40, heading: Math.PI }), 70);
+  assert.equal(speedLimitAt(city.map, { x: 320, z: 6, heading: Math.PI / 2 }), 60);
+});
+
+test('ring road winds smoothly: closed loop, no sharp kinks, straight and square through every junction', () => {
+  const r = city.ring;
+  assert.deepEqual(r[0], r[r.length - 1]);
+  let worst = 0;
+  for (let i = 1; i < r.length - 1; i++) {
+    const a = Math.atan2(r[i].z - r[i - 1].z, r[i].x - r[i - 1].x), b = Math.atan2(r[i + 1].z - r[i].z, r[i + 1].x - r[i].x);
+    worst = Math.max(worst, Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a))));
+  }
+  assert.ok(worst < .12, `max turn per 2 m step ${worst}`);
+  for (const n of Object.values(city.nodes).filter(n => n.kind === 'ring')) {
+    for (const w of n.links) {
+      const d = city.leaveDir(n.id, w);
+      assert.ok(Math.abs(d.x) > .999 || Math.abs(d.z) > .999, `${n.id}→${w} leaves square`);
+    }
+    assert.equal(n.links.length, 3, n.id);
+  }
+  // Ring cars go all the way round: one closed lane each way.
+  const ringLanes = cityLanes(city).filter(l => l.path);
+  assert.equal(ringLanes.length, 2);
+  assert.ok(ringLanes.every(l => l.loop && l.path!.length > 2000));
 });
 
 test('Upper Town: raised crossings, streets climb in a straight line, the plain stays flat', () => {

@@ -37,8 +37,8 @@ export function signsAhead(signs: PlacedSign[], pose: Point & { heading: number 
 }
 
 /** Signs placed by the map's speed zones: the 3.24 plate stands at the zone start facing its traffic. */
-export function zoneSigns(zones: { id: string; dir: Point; limit: number; signAt: Point }[]): PlacedSign[] {
-  return zones.map(z => ({ id: `zone-${z.id}`, code: '3.24', value: z.limit, at: z.signAt, facing: { x: -z.dir.x, z: -z.dir.z } }));
+export function zoneSigns(zones: { id: string; dir?: Point; limit: number; signAt: Point }[]): PlacedSign[] {
+  return zones.filter(z => z.dir).map(z => ({ id: `zone-${z.id}`, code: '3.24', value: z.limit, at: z.signAt, facing: { x: -z.dir!.x, z: -z.dir!.z } }));
 }
 
 /** Keeps each seen sign on the HUD while it is ahead and for `hold` seconds after passing it. */

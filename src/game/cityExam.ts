@@ -81,8 +81,8 @@ export class CityExamRunner implements ExamSession {
   /** Where the car stands at the start: in the car park, or in the right lane of the start street. */
   spawn(): Point & { heading: number } {
     if (this.plan[0]?.kind === 'start') return { ...this.city.parking.spawn };
-    const edge = this.startEdge, a = this.city.nodes[edge[0]], b = this.city.nodes[edge[1]];
-    return { ...this.lanePoint(edge, this.practice ? .12 : .5), heading: Math.atan2(b.x - a.x, -(b.z - a.z)) };
+    const edge = this.startEdge, p = this.city.pointOn(edge, this.practice ? .12 : .5, this.city.edgeBetween(edge[0], edge[1])!.lane);
+    return { x: p.x, z: p.z, heading: Math.atan2(p.dir.x, -p.dir.z) };
   }
   actors() {
     const c = this.circling; if (!c) return [];
@@ -94,14 +94,13 @@ export class CityExamRunner implements ExamSession {
   get target(): Placement | null { return this.plan[this.stepIndex] ?? null; }
   /** Lane centre point on a directed edge at fraction t, in the right-hand lane. */
   lanePoint(edge: DirEdge, t: number, lateral?: number): Point {
-    const a = this.city.nodes[edge[0]], b = this.city.nodes[edge[1]], d = unit(a, b), r = rightOf(d);
-    const lane = lateral ?? this.city.edgeBetween(edge[0], edge[1])!.lane;
-    return { x: a.x + (b.x - a.x) * t + r.x * lane, z: a.z + (b.z - a.z) * t + r.z * lane };
+    const p = this.city.pointOn(edge, t, lateral ?? this.city.edgeBetween(edge[0], edge[1])!.lane);
+    return { x: p.x, z: p.z };
   }
   goal() {
     if (!this.finishEdge || this.finished) return null;
-    const a = this.city.nodes[this.finishEdge[0]], b = this.city.nodes[this.finishEdge[1]];
-    return { ...this.lanePoint(this.finishEdge, .5), heading: Math.atan2(b.x - a.x, -(b.z - a.z)) };
+    const p = this.city.pointOn(this.finishEdge, .5, this.city.edgeBetween(this.finishEdge[0], this.finishEdge[1])!.lane);
+    return { x: p.x, z: p.z, heading: Math.atan2(p.dir.x, -p.dir.z) };
   }
   /** The route ahead as directed edges, for the city schema. */
   route(): DirEdge[] { return this.path; }
@@ -165,7 +164,7 @@ export class CityExamRunner implements ExamSession {
   /** Neighbour of `node` lying in direction `d` from it. */
   private neighbourToward(node: CityNode, d: Point) {
     let best: string | undefined, bestDot = .7;
-    for (const w of node.links) { const k = dot(unit(node, this.city.nodes[w]), d); if (k > bestDot) { bestDot = k; best = w; } }
+    for (const w of node.links) { const k = dot(this.city.leaveDir(node.id, w), d); if (k > bestDot) { bestDot = k; best = w; } }
     return best;
   }
 
@@ -185,7 +184,7 @@ export class CityExamRunner implements ExamSession {
     const entered = this.city.nodes[this.leaving.id];
     let out: string | undefined;
     for (const w of entered.links) {
-      const o = unit(entered, this.city.nodes[w]), rel = { x: state.x - entered.x, z: state.z - entered.z };
+      const o = this.city.leaveDir(entered.id, w), rel = { x: state.x - entered.x, z: state.z - entered.z };
       const along = dot(rel, o), across = Math.abs(rel.x * o.z - rel.z * o.x);
       const half = o.x !== 0 ? entered.area.halfX : entered.area.halfZ, width = this.city.edgeBetween(entered.id, w)!.width;
       if (along > half + 4 && across < width / 2 + 1.5) out = w;
@@ -271,7 +270,7 @@ export class CityExamRunner implements ExamSession {
 
   private checkFinish(frame: ExamFrame, say: string[]) {
     const goal = this.goal(); if (!goal || this.target) return;
-    const d = unit(this.city.nodes[this.finishEdge![0]], this.city.nodes[this.finishEdge![1]]), r = rightOf(d);
+    const d = forwardOf(goal.heading), r = rightOf(d);
     const rel = { x: frame.state.x - goal.x, z: frame.state.z - goal.z };
     const inZone = Math.abs(dot(rel, d)) < 4 && Math.abs(dot(rel, r)) < 1.8;
     this.finishHold = inZone && Math.abs(frame.state.speed) < .1 ? this.finishHold + frame.dt : 0;
@@ -283,7 +282,7 @@ export class CityExamRunner implements ExamSession {
     const t = this.target, { state, traffic } = frame;
     if (!t || t.kind !== 'node' || this.spawned.has(t.situation) || Math.abs(state.speed) < 1) return;
     if (edgeKey(this.current) !== edgeKey(entryOf(t))) return;
-    const node = this.city.nodes[t.node!], d = unit(this.city.nodes[t.inFrom!], node), r = rightOf(d);
+    const node = this.city.nodes[t.node!], d = this.city.arriveDir(t.inFrom!, node.id), r = rightOf(d);
     const toNode = Math.hypot(node.x - state.x, node.z - state.z);
     if (toNode > 70) return;
     this.spawned.add(t.situation);
@@ -302,7 +301,7 @@ export class CityExamRunner implements ExamSession {
       }
     }
     if (t.situation === 'a2-pedestrian') {
-      const o = unit(node, this.city.nodes[t.outTo!]), edge = this.city.edgeBetween(node.id, t.outTo!)!;
+      const o = this.city.leaveDir(node.id, t.outTo!), edge = this.city.edgeBetween(node.id, t.outTo!)!;
       const half = o.x !== 0 ? node.area.halfX : node.area.halfZ, c = { x: node.x + o.x * (half + 2.75), z: node.z + o.z * (half + 2.75) };
       const axis = o.x !== 0 ? 'z' : 'x', mid = axis === 'x' ? c.x : c.z, w = edge.width / 2 - .5;
       const at = (v: number) => axis === 'x' ? { x: v, z: c.z } : { x: c.x, z: v };
@@ -345,7 +344,7 @@ export class CityExamRunner implements ExamSession {
   }
 
   private judgeRegulator(frame: ExamFrame, entry: { heading: number; time: number }, maneuver: Maneuver, t: Placement) {
-    const dir = unit(this.city.nodes[t.inFrom!], this.city.nodes[t.node!]);
+    const dir = this.city.arriveDir(t.inFrom!, t.node!);
     const allowedAt = (time: number) => { const phase = regulatorAt(time), side = sideOf(phase.facing, dir); return { phase, side, ok: allowedManeuvers(phase.pose, side).includes(maneuver) }; };
     const now = allowedAt(entry.time), before = allowedAt(entry.time - 2);
     if (now.ok || before.ok) return;
@@ -483,7 +482,7 @@ export class CityExamRunner implements ExamSession {
       const toNode = Math.hypot(node.x - state.x, node.z - state.z);
       if (toNode < 75) {
         this.spawned.add('round-car');
-        const d = unit(this.city.nodes[t.inFrom!], node), entry = Math.atan2(-d.z, -d.x);
+        const d = this.city.arriveDir(t.inFrom!, node.id), entry = Math.atan2(-d.z, -d.x);
         const eta = Math.max(0, toNode - 15) / Math.max(Math.abs(state.speed), 5);
         this.circling = { theta: entry + eta * RING_SPEED / R.lane + .15, speed: RING_SPEED, travelled: 0, entry, flagged: false };
       }

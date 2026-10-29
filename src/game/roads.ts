@@ -16,8 +16,13 @@ export interface Approach {
   control?: 'signal' | 'none';
 }
 export interface Intersection { id: string; area: Rect; }
-export interface SpeedZone { id: string; area: Rect; dir: Point; limit: number; signAt: Point; }
-export interface RoadMap { roads: Rect[]; intersections: Intersection[]; approaches: Approach[]; crosswalks: Rect[]; speedZones: SpeedZone[]; defaultLimit: number; }
+/**
+ * A posted limit: a rectangle for one direction (`area` + `dir`), or a curved road in both directions (`path` + `half`).
+ */
+export interface SpeedZone { id: string; area?: Rect; dir?: Point; path?: Point[]; half?: number; limit: number; signAt: Point; }
+/** A curved road: its centre line as a polyline and half its width. */
+export interface Strip { path: Point[]; half: number; }
+export interface RoadMap { roads: Rect[]; strips?: Strip[]; intersections: Intersection[]; approaches: Approach[]; crosswalks: Rect[]; speedZones: SpeedZone[]; defaultLimit: number; }
 
 const rect = (x: number, z: number, width: number, depth: number): Rect => ({ x, z, halfX: width / 2, halfZ: depth / 2 });
 
@@ -41,12 +46,27 @@ export const inside = (r: Rect, p: Point, margin = 0) => Math.abs(p.x - r.x) <= 
 export const forwardOf = (heading: number): Point => ({ x: Math.sin(heading), z: -Math.cos(heading) });
 const dot = (a: Point, b: Point) => a.x * b.x + a.z * b.z;
 
-export function onRoad(map: RoadMap, p: Point, margin = 0) { return map.roads.some(r => inside(r, p, margin)); }
+/** Nearest point of a polyline: distance along it, distance from it, and the direction there. */
+export function projectOnPath(path: Point[], p: Point) {
+  let best = { along: 0, distance: Infinity, dir: { x: 1, z: 0 } }, along = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i], b = path[i + 1], dx = b.x - a.x, dz = b.z - a.z, length = Math.hypot(dx, dz) || 1e-9;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / (length * length)));
+    const distance = Math.hypot(p.x - a.x - dx * t, p.z - a.z - dz * t);
+    if (distance < best.distance) best = { along: along + t * length, distance, dir: { x: dx / length, z: dz / length } };
+    along += length;
+  }
+  return best;
+}
+export function onRoad(map: RoadMap, p: Point, margin = 0) {
+  return map.roads.some(r => inside(r, p, margin)) || (map.strips ?? []).some(s => projectOnPath(s.path, p).distance <= s.half + margin);
+}
+const inZone = (zone: SpeedZone, pose: Point, f: Point) => zone.path ? projectOnPath(zone.path, pose).distance <= (zone.half ?? 0) : !!zone.area && inside(zone.area, pose) && dot(zone.dir!, f) > .5;
 
 /** Posted zone that applies to a car at this position heading this way, if any. */
 export function activeZone(map: RoadMap, pose: Point & { heading: number }): SpeedZone | null {
   const f = forwardOf(pose.heading);
-  return map.speedZones.find(zone => inside(zone.area, pose) && dot(zone.dir, f) > .5) ?? null;
+  return map.speedZones.find(zone => inZone(zone, pose, f)) ?? null;
 }
 export function speedLimitAt(map: RoadMap, pose: Point & { heading: number }) { return activeZone(map, pose)?.limit ?? map.defaultLimit; }
 
@@ -117,6 +137,6 @@ export function validateMap(map: RoadMap): string[] {
     if (distanceToStopLine(approach, crossing.area) >= 0) errors.push(`${approach.id}: стоп-линия за перекрёстком`);
     if (approach.control !== 'none' && approach.heads.length === 0) errors.push(`${approach.id}: нет светофора`);
   }
-  for (const zone of map.speedZones) if (!onRoad(map, zone.area)) errors.push(`${zone.id}: зона вне дороги`);
+  for (const zone of map.speedZones) if (!onRoad(map, zone.area ?? zone.path![0])) errors.push(`${zone.id}: зона вне дороги`);
   return errors;
 }

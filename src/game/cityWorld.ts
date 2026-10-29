@@ -1,5 +1,6 @@
-import { TRACK_OFFSET, type CityLayout } from './city';
-import { box, finishWorld, houses, island, markings, newScene, parkedCar, rails, roadSign, signalPoles, tree, type World } from './world';
+import { pathLength, pointAlong, TRACK_OFFSET, type CityLayout } from './city';
+import { onRoad } from './roads';
+import { box, finishWorld, houses, island, markings, newScene, parkedCar, rails, ribbon, roadSign, signalPoles, tree, type World } from './world';
 import type { Obstacle } from './vehicle';
 
 /**
@@ -22,6 +23,7 @@ export function createCityWorld(city: CityLayout, hiddenSigns: Set<string> = new
   for (const n of Object.values(city.nodes)) surface(n.area.halfX * 2, n.area.halfZ * 2, n.x, n.z);
   for (const e of city.edges) {
     const a = city.nodes[e.a], b = city.nodes[e.b];
+    if (e.path) continue;
     if (e.axis === 'x') { const x0 = Math.min(a.x, b.x) + (a.x < b.x ? a.area.halfX : b.area.halfX), x1 = Math.max(a.x, b.x) - (a.x < b.x ? b.area.halfX : a.area.halfX); surface(x1 - x0, e.width, (x0 + x1) / 2, a.z); }
     else { const z0 = Math.min(a.z, b.z) + (a.z < b.z ? a.area.halfZ : b.area.halfZ), z1 = Math.max(a.z, b.z) - (a.z < b.z ? b.area.halfZ : a.area.halfZ); surface(e.width, z1 - z0, a.x, (z0 + z1) / 2); }
   }
@@ -37,8 +39,29 @@ export function createCityWorld(city: CityLayout, hiddenSigns: Set<string> = new
   const inner = city.roundabout.island * .72;
   obstacles.push({ x: round.x, z: round.z, halfX: inner, halfZ: inner });
 
+  // The winding ring: ribbons along its curve between the junction boxes — kerb, asphalt, solid centre line, lane dashes.
+  for (const e of city.edges.filter(e => e.path)) {
+    const a = city.nodes[e.a], b = city.nodes[e.b];
+    const clear = (p: { x: number; z: number }) => [a, b].every(n => Math.abs(p.x - n.x) > n.area.halfX - .5 || Math.abs(p.z - n.z) > n.area.halfZ - .5);
+    const path = e.path!.filter(clear);
+    ribbon(scene, path, 0, e.width + 3, .02, '#c0c5b5');
+    ribbon(scene, path, 0, e.width, .12, '#596760');
+    ribbon(scene, path, 0, .14, .145, '#f2eddb');
+    for (const side of [-4, 4]) ribbon(scene, path, side, .13, .14, '#e8dfbe', [4.2, 4.8]);
+  }
+  // Trees along the ring on both sides, where there is room.
+  for (let d = 10; d < pathLength(city.ring); d += 26) {
+    const p = pointAlong(city.ring, d);
+    for (const side of [-1, 1]) {
+      const at = { x: p.x - p.dir.z * side * 13, z: p.z + p.dir.x * side * 13 };
+      if (onRoad(city.map, at, 3) || city.lots.some(l => Math.abs(at.x - l.x) < l.halfX + 1 && Math.abs(at.z - l.z) < l.halfZ + 1)) continue;
+      tree(scene, at.x, at.z, .9); obstacles.push({ x: at.x, z: at.z, halfX: .35, halfZ: .35 });
+    }
+  }
+
   // Centre lines between junctions; the tram avenue gets tracks instead.
   for (const e of city.edges) {
+    if (e.path) continue;
     const a = city.nodes[e.a], b = city.nodes[e.b], len = Math.abs(e.axis === 'x' ? b.x - a.x : b.z - a.z);
     const from = (e.axis === 'x' ? Math.min(a.x, b.x) : Math.min(a.z, b.z)), line = e.axis === 'x' ? a.z : a.x;
     const clear = (e.axis === 'x' ? a.area.halfX : a.area.halfZ) + 7;

@@ -8,9 +8,9 @@ export const edgeKey = (e: DirEdge) => `${e[0]}>${e[1]}`;
 
 /** Manoeuvre at node v when arriving from u and leaving towards w. */
 export function turnAt(city: CityLayout, u: string, v: string, w: string): Maneuver {
-  const a = city.nodes[u], b = city.nodes[v], c = city.nodes[w];
   if (u === w) return 'uturn';
-  const d1 = { x: Math.sign(b.x - a.x), z: Math.sign(b.z - a.z) }, d2 = { x: Math.sign(c.x - b.x), z: Math.sign(c.z - b.z) };
+  // Directions at the junction itself: a curved street (the ring) may arrive at an angle to the line between the crossings.
+  const d1 = city.arriveDir(u, v), d2 = city.leaveDir(v, w);
   if (d1.x * d2.x + d1.z * d2.z > .5) return 'straight';
   return d1.x * d2.z - d1.z * d2.x > 0 ? 'right' : 'left';
 }
@@ -70,9 +70,9 @@ export function candidates(city: CityLayout, situation: string): Placement[] {
     case 'roundabout': return through('round', 'left');
     case 'crosswalk': return city.zebras.flatMap(z => [[z.edge[0], z.edge[1]], [z.edge[1], z.edge[0]]] as DirEdge[]).map(edge => ({ situation, kind: 'edge' as const, edge }));
     // Two lanes each way and no climb: the avenue and the ring.
-    case 'lane-change': return city.edges.filter(e => (e.kind === 'avenue' || e.kind === 'ring') && city.nodes[e.a].y === city.nodes[e.b].y && city.nodes[e.a].links.length > 2 && city.nodes[e.b].links.length > 2)
+    case 'lane-change': return city.edges.filter(e => e.kind === 'avenue' && city.nodes[e.a].y === city.nodes[e.b].y && city.nodes[e.a].links.length > 2 && city.nodes[e.b].links.length > 2)
       .flatMap(e => [[e.a, e.b], [e.b, e.a]] as DirEdge[]).map(edge => ({ situation, kind: 'edge' as const, edge }));
-    case 'u-turn': return city.edges.filter(e => e.axis === 'x' && city.nodes[e.a].z === 0).flatMap(e => [[e.a, e.b], [e.b, e.a]] as DirEdge[]).map(edge => ({ situation, kind: 'uturn' as const, edge }));
+    case 'u-turn': return city.edges.filter(e => !e.path && e.axis === 'x' && city.nodes[e.a].z === 0 && city.nodes[e.b].z === 0).flatMap(e => [[e.a, e.b], [e.b, e.a]] as DirEdge[]).map(edge => ({ situation, kind: 'uturn' as const, edge }));
     default: return [];
   }
 }

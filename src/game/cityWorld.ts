@@ -1,5 +1,5 @@
 import { TRACK_OFFSET, type CityLayout } from './city';
-import { box, finishWorld, houses, markings, newScene, rails, roadSign, signalPoles, tree, type World } from './world';
+import { box, finishWorld, houses, island, markings, newScene, parkedCar, rails, roadSign, signalPoles, tree, type World } from './world';
 import type { Obstacle } from './vehicle';
 
 /**
@@ -26,6 +26,17 @@ export function createCityWorld(city: CityLayout, hiddenSigns: Set<string> = new
     else { const z0 = Math.min(a.z, b.z) + (a.z < b.z ? a.area.halfZ : b.area.halfZ), z1 = Math.max(a.z, b.z) - (a.z < b.z ? b.area.halfZ : a.area.halfZ); surface(e.width, z1 - z0, a.x, (z0 + z1) / 2); }
   }
 
+  // The car park by the start street: asphalt, a driveway to the avenue, bays with parked cars.
+  const P = city.parking;
+  surface(P.area.halfX * 2, P.area.halfZ * 2, P.area.x, P.area.z); surface(P.driveway.halfX * 2, P.driveway.halfZ * 2, P.driveway.x, P.driveway.z);
+  for (let x = P.area.x - P.area.halfX + 6; x < P.area.x + P.area.halfX - 2; x += 8) for (const z of [P.area.z - P.area.halfZ + 3, P.area.z + P.area.halfZ - 3]) box(scene, .12, .015, 5, x - 4, .13, z, '#f2eddb');
+  P.stalls.forEach((s, i) => parkedCar(scene, s.x, s.z, ['#ffd166', '#7fb7e6', '#f4a7b9', '#8fd3a8', '#c3a6e6'][i % 5], obstacles));
+  // Roundabout: the island in the middle of its junction box is a kerb the car cannot cross.
+  const round = city.nodes[city.roundabout.node];
+  island(scene, round.x, round.z, city.roundabout.island);
+  const inner = city.roundabout.island * .72;
+  obstacles.push({ x: round.x, z: round.z, halfX: inner, halfZ: inner });
+
   // Centre lines between junctions; the tram avenue gets tracks instead.
   for (const e of city.edges) {
     const a = city.nodes[e.a], b = city.nodes[e.b], len = Math.abs(e.axis === 'x' ? b.x - a.x : b.z - a.z);
@@ -37,6 +48,11 @@ export function createCityWorld(city: CityLayout, hiddenSigns: Set<string> = new
     if (!solid) for (let t = clear; t < len - clear; t += 9) {
       const v = from + t + 2.1;
       if (e.axis === 'x') box(scene, 4.2, .015, .16, v, .14, line, '#e8dfbe'); else box(scene, .16, .015, 4.2, line, .14, v, '#e8dfbe');
+    }
+    // 16 m roads have two lanes each way: dashed lines between them.
+    if (e.width === 16) for (const side of [-4, 4]) for (let t = clear; t < len - clear; t += 9) {
+      const v = from + t + 2.1;
+      if (e.axis === 'x') box(scene, 4.2, .015, .13, v, .14, line + side, '#e8dfbe'); else box(scene, .13, .015, 4.2, line + side, .14, v, '#e8dfbe');
     }
     // A solid line where the main road meets junctions keeps it readable as the main road.
     if (solid) {

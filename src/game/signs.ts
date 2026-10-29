@@ -1,7 +1,7 @@
 import { forwardOf, type Point } from './roads.ts';
 
 // Road signs as data: the same placement feeds the 3D scene, the HUD panel and, later, the judge.
-export type SignCode = '1.5' | '2.1' | '2.4' | '2.5' | '3.24' | '5.19.1';
+export type SignCode = '1.5' | '2.1' | '2.4' | '2.5' | '3.24' | '4.3' | '5.19.1';
 export interface SignInfo { code: SignCode; name: string; hint: string; ruleId?: string; }
 export interface PlacedSign { id: string; code: SignCode; value?: number; at: Point; facing: Point; }
 
@@ -11,6 +11,7 @@ export const signCatalog: Record<SignCode, SignInfo> = {
   '2.4': { code: '2.4', name: 'Уступите дорогу', hint: 'Пропустите транспорт на пересекаемой дороге.', ruleId: 'sign-2.4' },
   '2.5': { code: '2.5', name: 'Движение без остановки запрещено', hint: 'Полная остановка у стоп-линии, затем уступите дорогу.', ruleId: 'sign-2.5' },
   '3.24': { code: '3.24', name: 'Ограничение максимальной скорости', hint: 'Не быстрее указанного — до ближайшего перекрёстка.', ruleId: '10.2' },
+  '4.3': { code: '4.3', name: 'Круговое движение', hint: 'Уступите тем, кто уже на кольце; по кругу — против часовой стрелки.', ruleId: '13.11(1)' },
   '5.19.1': { code: '5.19.1', name: 'Пешеходный переход', hint: 'Будьте готовы пропустить пешеходов.', ruleId: '14.1' },
 };
 

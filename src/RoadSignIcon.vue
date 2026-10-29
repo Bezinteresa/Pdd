@@ -11,6 +11,10 @@ defineProps<{ code: SignCode; value?: number }>();
       <circle cx="50" cy="50" r="47" fill="#c8302a" /><circle cx="50" cy="50" r="36" fill="#fff" />
       <text x="50" y="51" text-anchor="middle" dominant-baseline="central" font-size="36" font-weight="700" fill="#1d2120">{{ value }}</text>
     </template>
+    <template v-else-if="code === '4.3'">
+      <circle cx="50" cy="50" r="47" fill="#1f5fbf" /><g fill="none" stroke="#fff" stroke-width="8"><path d="M50 22a28 28 0 0 1 26 18" /><path d="M72 66a28 28 0 0 1-30 12" /><path d="M28 62a28 28 0 0 1 6-34" /></g>
+      <g fill="#fff"><path d="M84 36 70 46l2-16Z" /><path d="M36 86l-4-16 14 4Z" /><path d="M24 30l16-4-6 14Z" /></g>
+    </template>
     <template v-else-if="code === '2.5'">
       <path d="M31 4H69L96 31V69L69 96H31L4 69V31Z" fill="#c8302a" stroke="#fff" stroke-width="4" />
       <text x="50" y="52" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#fff">STOP</text>

@@ -1,11 +1,11 @@
 import { edgeLength, rightOf, TRACK_OFFSET, type CityLayout, type CityNode } from './city.ts';
-import { edgeKey, entryOf, exitFor, exitOf, planExam, shortestPath, turnAt, type DirEdge, type Placement } from './cityRoute.ts';
+import { edgeKey, entryOf, exitFor, planExam, practicePlacement, shortestPath, turnAt, type DirEdge, type Placement } from './cityRoute.ts';
 import { maneuverLabel, pedestrianConflict, situations, STOP_SPEED, STOP_ZONE, type ExamFrame, type ExamSession, type Pedestrian, type RouteStep, type SituationProgress, type StagedProps } from './exam.ts';
 import { allowedManeuvers, poseLabel, regulatorAt, sideLabel, sideOf, type Maneuver } from './regulator.ts';
-import { distanceToStopLine, forwardOf, inside, type Approach, type Point } from './roads.ts';
+import { distanceToStopLine, forwardOf, inside, type Approach, type Point, type Rect } from './roads.ts';
 import type { Violation } from './rules.ts';
 import type { PlacedSign } from './signs.ts';
-import type { TrafficLane, TrafficSystem } from './traffic.ts';
+import { carPosition, FORCED_DECEL, type TrafficCar, type TrafficLane, type TrafficSystem } from './traffic.ts';
 
 // The inspector exam in the city: five staged situations placed on the graph, a route through them,
 // turn-by-turn commands by distance, and a new route (with a recorded error) when the learner goes elsewhere.
@@ -15,13 +15,18 @@ const unit = (from: Point, to: Point) => { const dx = to.x - from.x, dz = to.z -
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const titleOf = (id: string) => situations.find(s => s.id === id)?.title ?? id;
 const turnWord: Record<Maneuver, string> = { left: 'налево', right: 'направо', straight: 'прямо', uturn: 'на разворот' };
+/** Exits of a four-way roundabout counted from the entry, driving anticlockwise. */
+const exitWord: Record<Maneuver, string> = { right: 'первый', straight: 'второй', left: 'третий', uturn: 'четвёртый' };
+/** The car on the roundabout keeps this speed, m/s. */
+const RING_SPEED = 6;
 /** Within this distance of its place a situation counts as started; commands become «через N метров». */
 const SITUATION_RADIUS = 90, COMMAND_RANGE = 140;
 export const CITY_START: DirEdge = ['n0_180', 'n0_90'];
 
 export class CityExamRunner implements ExamSession {
   readonly selected: string[];
-  readonly practice = null;
+  /** Situation id when practising one situation in the city: the run ends right after it. */
+  readonly practice: string | null;
   readonly plan: Placement[];
   readonly steps: RouteStep[];
   stepIndex = 0;
@@ -47,15 +52,44 @@ export class CityExamRunner implements ExamSession {
   private uTurnAligned = false;
   private finishEdge: DirEdge | null = null;
   private finishHold = 0;
+  private startEdge: DirEdge;
+  private lane: { want: 'left' | 'right'; held: number; checked: boolean; car: TrafficCar | null } | null = null;
+  private circling: { theta: number; speed: number; travelled: number; entry: number; flagged: boolean } | null = null;
+  private wrongWay = 0;
+  private wrongFlagged = false;
 
-  constructor(city: CityLayout, selected: string[], start: DirEdge = CITY_START) {
+  constructor(city: CityLayout, selected: string[], start: DirEdge = CITY_START, practice: string | null = null) {
     this.city = city;
-    this.plan = planExam(city, selected, start);
+    this.practice = practice;
+    const single = practice ? practicePlacement(city, practice) : null;
+    this.plan = practice ? (single ? [single] : []) : planExam(city, selected, start);
+    if (single) start = entryOf(single);
     this.selected = this.plan.map(p => p.situation);
-    this.steps = [...this.plan.map(p => ({ kind: p.kind === 'uturn' ? 'uturn' as const : 'node' as const, command: titleOf(p.situation) })), { kind: 'finish', command: 'Остановка у правого края' }];
+    this.steps = [...this.plan.map(p => ({ kind: p.kind === 'uturn' ? 'uturn' as const : 'node' as const, command: titleOf(p.situation) })),
+      practice ? { kind: 'end' as const, command: 'Ситуация пройдена. Разберём, как получилось.' } : { kind: 'finish' as const, command: 'Остановка у правого края' }];
+    const first = this.plan[0];
+    if (first?.kind === 'start') {
+      // The exam begins in the car park: the first task is already under way.
+      start = first.edge!; this.state.set(first.situation, 'active');
+      this.command = practice ? 'Выезжайте с парковки направо.' : 'Экзамен начался. Пристегнитесь и выезжайте с парковки направо.';
+    } else if (practice) this.command = 'Начинайте движение.';
+    this.startEdge = start;
     this.current = start;
     this.reroute();
   }
+
+  /** Where the car stands at the start: in the car park, or in the right lane of the start street. */
+  spawn(): Point & { heading: number } {
+    if (this.plan[0]?.kind === 'start') return { ...this.city.parking.spawn };
+    const edge = this.startEdge, a = this.city.nodes[edge[0]], b = this.city.nodes[edge[1]];
+    return { ...this.lanePoint(edge, this.practice ? .12 : .5), heading: Math.atan2(b.x - a.x, -(b.z - a.z)) };
+  }
+  actors() {
+    const c = this.circling; if (!c) return [];
+    const n = this.city.nodes[this.city.roundabout.node], r = this.city.roundabout.lane;
+    return [{ id: 'round-car', x: n.x + Math.cos(c.theta) * r, z: n.z + Math.sin(c.theta) * r, heading: c.theta, color: '#7fb7e6' }];
+  }
+  obstacles(): Rect[] { return this.actors().map(a => ({ x: a.x, z: a.z, halfX: 1.7, halfZ: 1.7 })); }
 
   get target(): Placement | null { return this.plan[this.stepIndex] ?? null; }
   /** Lane centre point on a directed edge at fraction t, in the right-hand lane. */
@@ -114,6 +148,12 @@ export class CityExamRunner implements ExamSession {
     this.judgeStopSign(frame);
     this.updatePedestrians(frame);
     this.judgeUTurn(frame, say);
+    this.judgeZebra(frame, say);
+    this.judgeLaneChange(frame, say);
+    this.judgeAdjacent(frame, say);
+    this.updateCircling(frame);
+    this.judgeRoundabout(frame);
+    if (this.finished) return say;
     this.updateCommand(state, say);
     this.checkFinish(frame, say);
     return say;
@@ -166,6 +206,10 @@ export class CityExamRunner implements ExamSession {
       if (maneuver !== target.maneuver) frame.judge.record('route', time, state, `Задание: ${maneuverLabel[target.maneuver!]}, выполнено: ${maneuverLabel[maneuver]}.`, { situation: target.situation });
       if (target.situation === 'a-regulator') this.judgeRegulator(frame, entry, maneuver, target);
       this.complete(target.situation, say);
+    } else if (target?.kind === 'edge' && edgeKey(this.current) === edgeKey(target.edge!)) {
+      // Reached the end of the street without doing the task there.
+      frame.judge.record('route', time, state, target.situation === 'lane-change' ? 'Перестроение не выполнено до конца улицы.' : 'Задание на этой улице не выполнено.', { situation: target.situation });
+      this.complete(target.situation, say);
     } else if (target?.kind === 'uturn' && edgeKey(this.current) === edgeKey(entryOf(target))) {
       frame.judge.record('route', time, state, 'Разворот не выполнен — вы доехали до перекрёстка.', { situation: target.situation });
       this.complete(target.situation, say);
@@ -177,10 +221,12 @@ export class CityExamRunner implements ExamSession {
     this.reroute();
   }
 
-  private complete(id: string, _say: string[]) {
+  private complete(id: string, say: string[]) {
     this.state.set(id, 'done');
     this.stepIndex++;
     this.stoppedAtLine = false; this.stopChecked = false; this.pedestrianFlagged = false; this.uTurnStarted = false; this.uTurnAligned = false;
+    this.lane = null; this.wrongFlagged = false;
+    if (this.practice) { this.finished = true; this.command = 'Ситуация пройдена. Разберём, как получилось.'; say.push(this.command); return; }
     if (!this.target && !this.finishEdge) this.chooseFinish();
   }
 
@@ -194,13 +240,15 @@ export class CityExamRunner implements ExamSession {
   private markActive(state: Point) {
     const t = this.target; if (!t || this.state.has(t.situation)) return;
     const entry = entryOf(t), node = this.city.nodes[entry[1]];
-    if (edgeKey(this.current) === edgeKey(entry) && (t.kind === 'uturn' || Math.hypot(node.x - state.x, node.z - state.z) < SITUATION_RADIUS)) this.state.set(t.situation, 'active');
+    if (edgeKey(this.current) === edgeKey(entry) && (t.kind !== 'node' || Math.hypot(node.x - state.x, node.z - state.z) < SITUATION_RADIUS)) this.state.set(t.situation, 'active');
   }
 
   private updateCommand(state: VehiclePose, say: string[]) {
     const t = this.target;
     if (!t && this.finishEdge && edgeKey(this.current) === edgeKey(this.finishEdge)) { this.speak(say, 'finish', 'Остановитесь у правого края в зелёной зоне.'); return; }
     if (t?.kind === 'uturn' && edgeKey(this.current) === edgeKey(t.edge!)) { this.speak(say, `uturn-${t.situation}`, 'Развернитесь в удобном месте, где это разрешено.'); return; }
+    if (t?.kind === 'start' && this.state.get(t.situation) === 'active') { this.speak(say, 'start', this.command); return; }
+    if (t?.situation === 'lane-change' && this.lane) { this.speak(say, `lane-${this.lane.want}`, this.lane.want === 'left' ? 'Перестройтесь в левую полосу.' : 'Перестройтесь в правую полосу.'); return; }
     // First junction on the route where the learner has to do something: a turn, or the staged junction itself.
     let distance = Math.hypot(this.city.nodes[this.current[1]].x - state.x, this.city.nodes[this.current[1]].z - state.z);
     for (let i = 0; i < this.path.length; i++) {
@@ -208,10 +256,11 @@ export class CityExamRunner implements ExamSession {
       const staged = t?.kind === 'node' && i === this.path.length - 1 && v === t.node;
       const maneuver = staged ? t!.maneuver! : next ? turnAt(this.city, u, v, next[1]) : 'straight';
       // A bend of the ring road with no other way is not a command.
-      if ((maneuver !== 'straight' && this.city.nodes[v].links.length > 2) || staged) {
+      const round = this.city.nodes[v].kind === 'round';
+      if ((maneuver !== 'straight' && this.city.nodes[v].links.length > 2) || staged || round) {
         if (distance > COMMAND_RANGE) break;
         const near = distance < 30, metres = Math.max(20, Math.round(distance / 10) * 10);
-        const text = maneuver === 'straight' ? (near ? 'На перекрёстке — прямо.' : `Через ${metres} метров на перекрёстке — прямо.`) : near ? `Поверните ${turnWord[maneuver]}.` : `Через ${metres} метров поверните ${turnWord[maneuver]}.`;
+        const text = round ? (near ? `На кольце — ${exitWord[maneuver]} съезд.` : `Через ${metres} метров круговое движение, ${exitWord[maneuver]} съезд.`) : maneuver === 'straight' ? (near ? 'На перекрёстке — прямо.' : `Через ${metres} метров на перекрёстке — прямо.`) : near ? `Поверните ${turnWord[maneuver]}.` : `Через ${metres} метров поверните ${turnWord[maneuver]}.`;
         this.speak(say, `${v}-${maneuver}-${near ? 'near' : 'far'}`, text);
         return;
       }
@@ -270,6 +319,8 @@ export class CityExamRunner implements ExamSession {
         : s === 'b-oncoming' ? { rule: 'ПДД 13.12', ruleIds: ['13.12', '1.2'], detail: 'При повороте налево встречный автомобиль был вынужден тормозить.' }
         : s === 'b-tram' || car.kind === 'tram' ? { rule: 'ПДД 13.11', ruleIds: ['13.11', '1.2'], detail: 'Трамвай, имеющий преимущество, был вынужден тормозить.' }
         : s === 'd-stop' ? { rule: 'ПДД 13.9, знак 2.5', ruleIds: ['sign-2.5', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
+        : s === 'adjacent' ? { rule: 'ПДД 8.3', ruleIds: ['8.3', '1.2'], detail: 'Выезжая с парковки, вы вынудили тормозить автомобиль на дороге.' }
+        : s === 'lane-change' ? { rule: 'ПДД 8.4', ruleIds: ['8.4', '1.2'], detail: 'Перестраиваясь, вы вынудили тормозить автомобиль, ехавший попутно.' }
         : s === 'd-yield' ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Автомобиль на главной дороге был вынужден тормозить.' }
         : ['main', 'ring'].includes(this.nodeAt(frame.state)?.kind ?? '') ? { rule: 'ПДД 13.9, знак 2.4', ruleIds: ['sign-2.4', '13.9', '1.2'], detail: 'Выезжая со второстепенной дороги, вы вынудили тормозить автомобиль на главной.' }
         : this.nodeAt(frame.state)?.kind === 'signal' ? { rule: 'ПДД 13.4', ruleIds: ['13.4', '1.2'], detail: 'На регулируемом перекрёстке встречный или поперечный транспорт был вынужден тормозить: при повороте налево на зелёный уступите встречным.' }
@@ -311,7 +362,7 @@ export class CityExamRunner implements ExamSession {
       // In the city a pedestrian crosses once and leaves the crossing at the far curb.
       if (p[along] > p.max! || p[along] < p.min!) p.speed = 0;
       const onCrossing = state[along] > p.min! - 1 && state[along] < p.max! + 1;
-      if (onCrossing && !this.pedestrianFlagged && pedestrianConflict(p, state)) {
+      if ((p.situation ?? 'a2-pedestrian') === 'a2-pedestrian' && onCrossing && !this.pedestrianFlagged && pedestrianConflict(p, state)) {
         this.pedestrianFlagged = true;
         frame.judge.record('pedestrian', frame.time, state, 'Пешеход переходил проезжую часть, на которую вы поворачивали.', { situation: 'a2-pedestrian' });
       }
@@ -338,6 +389,135 @@ export class CityExamRunner implements ExamSession {
       this.reroute();
     }
   }
+  private zebraOf(t: Placement) { return this.city.zebras.find(z => edgeKey(z.edge) === edgeKey(t.edge!) || edgeKey([z.edge[1], z.edge[0]]) === edgeKey(t.edge!))!; }
+
+  /** PDD 14.1: a pedestrian steps onto the zebra as the learner comes; driving over it while they cross is an error. */
+  private judgeZebra(frame: ExamFrame, say: string[]) {
+    const t = this.target;
+    if (t?.situation !== 'crosswalk' || t.kind !== 'edge' || edgeKey(this.current) !== edgeKey(t.edge!) || this.inNode) return;
+    const { state } = frame, zebra = this.zebraOf(t), a = this.city.nodes[t.edge![0]], b = this.city.nodes[t.edge![1]], d = unit(a, b), r = rightOf(d);
+    const half = this.city.edgeBetween(a.id, b.id)!.width / 2;
+    const past = dot({ x: state.x - zebra.at.x, z: state.z - zebra.at.z }, d);
+    if (!this.spawned.has('crosswalk') && past > -45 && past < -18 && Math.abs(state.speed) > 1) {
+      this.spawned.add('crosswalk');
+      // From the far kerb towards the learner's lane: they are on the carriageway and coming when the learner arrives.
+      const walk = zebra.axis === 'x' ? 'z' : 'x', centre = zebra.at[walk], side = -Math.sign(r[walk]) as 1 | -1, reach = half + 1.2;
+      const at = (v: number) => walk === 'x' ? { x: v, z: zebra.at.z } : { x: zebra.at.x, z: v };
+      this.pedestrians = [...this.pedestrians, { ...at(centre + side * reach), dir: (-side) as 1 | -1, speed: 1.3, waiting: false, axis: walk, min: centre - reach, max: centre + reach, situation: 'crosswalk' }];
+    }
+    if (past > 6) { this.complete(t.situation, say); return; }
+    if (Math.abs(past) > 4 || Math.abs(state.speed) < .3 || this.pedestrianFlagged) return;
+    for (const p of this.pedestrians) {
+      if (p.situation !== 'crosswalk') continue;
+      const walk = p.axis === 'z' ? 'z' : 'x', offset = p[walk] - state[walk], approaching = offset * p.dir < 0;
+      const onCarriageway = Math.abs(p[walk] - zebra.at[walk]) < half + .3;
+      if (onCarriageway && (Math.abs(offset) < 1.6 || (approaching && Math.abs(offset) < half + 1))) {
+        this.pedestrianFlagged = true;
+        frame.judge.record('pedestrian', frame.time, state, 'Пешеход переходил дорогу по нерегулируемому переходу, а вы проехали, не уступив ему.', { rule: 'ПДД 14.1', ruleIds: ['14.1'], situation: 'crosswalk' });
+      }
+    }
+  }
+
+  /** PDD 8.1, 8.4: a lane change on command — signal first, and let the car coming up in that lane pass. */
+  private judgeLaneChange(frame: ExamFrame, say: string[]) {
+    const t = this.target;
+    if (t?.situation !== 'lane-change' || t.kind !== 'edge' || edgeKey(this.current) !== edgeKey(t.edge!) || this.inNode) return;
+    const { state, time, judge, traffic } = frame, a = this.city.nodes[t.edge![0]], b = this.city.nodes[t.edge![1]], d = unit(a, b), r = rightOf(d);
+    const rel = { x: state.x - a.x, z: state.z - a.z }, lateral = dot(rel, r), into = dot(rel, d);
+    if (!this.lane) {
+      if (into < 12 || Math.abs(state.speed) < 1) return;
+      const want = lateral > 4 ? 'left' as const : 'right' as const;
+      this.lane = { want, held: 0, checked: false, car: null };
+      // A faster car comes up from behind in the lane the learner has to move into.
+      const axis = d.x !== 0 ? 'x' : 'z', sign = (Math.sign(d.x) || Math.sign(d.z)) as 1 | -1, laneOffset = want === 'left' ? 2 : 6;
+      const offset = axis === 'x' ? a.z + r.z * laneOffset : a.x + r.x * laneOffset, s = state[axis] * sign;
+      const approaches = this.city.map.approaches.filter(p => p.dir.x === d.x && p.dir.z === d.z && Math.abs((axis === 'x' ? p.stopLine[0].z : p.stopLine[0].x) - offset) < 8);
+      const lane: TrafficLane = { id: 'stage-lane-change', axis, sign, offset, start: s - 40, end: s + 220, loop: false, approaches };
+      this.lane.car = traffic.spawn(lane, s - 28, { v0: 15, speed: 15, color: '#f4a7b9' });
+    }
+    const inTarget = this.lane.want === 'left' ? lateral < 4 : lateral > 4;
+    if (inTarget && !this.lane.checked) {
+      this.lane.checked = true;
+      if (!judge.signalRecently(this.lane.want, time)) judge.record('turn-signal', time, state, 'Перед перестроением не был включён указатель поворота.', { situation: 'lane-change' });
+      const car = this.lane.car;
+      if (car && traffic.cars.includes(car)) {
+        const p = carPosition(car), gap = dot({ x: state.x - p.x, z: state.z - p.z }, d) - 2.05 - car.halfLength;
+        if (gap > -6 && gap < car.speed + 4) judge.record('yield', time, state, 'Перестраиваясь, вы не уступили автомобилю, который ехал попутно по той полосе.', { rule: 'ПДД 8.4', ruleIds: ['8.4', '1.2'], situation: 'lane-change' });
+      }
+    }
+    this.lane.held = inTarget ? this.lane.held + frame.dt : 0;
+    if (this.lane.held > 1.5) this.complete(t.situation, say);
+  }
+
+  /** PDD 8.3: leaving the car park, give way to the pedestrian on the pavement and to the cars on the avenue. */
+  private judgeAdjacent(frame: ExamFrame, say: string[]) {
+    const t = this.target;
+    if (t?.kind !== 'start' || this.state.get(t.situation) !== 'active') return;
+    const { state, traffic } = frame, P = this.city.parking;
+    if (!this.spawned.has('adjacent') && Math.abs(state.speed) > .3) {
+      this.spawned.add('adjacent');
+      const lane = traffic.cars.find(c => c.lane.id === 'avenue-n')?.lane;
+      const s = -(P.driveway.z + 38);
+      if (lane && traffic.cars.every(c => c.lane !== lane || Math.abs(c.s - s) > 14)) traffic.spawn(lane, s, { speed: 9, color: '#c3a6e6' });
+      const kerb = P.driveway.x - P.driveway.halfX + 1.3;
+      this.pedestrians = [...this.pedestrians, { x: kerb, z: P.driveway.z + 13, dir: -1, speed: 1.2, waiting: false, axis: 'z', min: P.driveway.z - 14, max: P.driveway.z + 14, situation: 'adjacent' }];
+    }
+    for (const p of this.pedestrians) {
+      if (p.situation !== 'adjacent' || this.pedestrianFlagged || !pedestrianConflict(p, state)) continue;
+      this.pedestrianFlagged = true;
+      frame.judge.record('pedestrian', frame.time, state, 'Выезжая с парковки, вы не уступили пешеходу на тротуаре.', { rule: 'ПДД 8.3', ruleIds: ['8.3'], situation: 'adjacent' });
+    }
+    const exit = this.city.nodes[P.exit[1]], from = this.city.nodes[P.exit[0]], d = unit(from, exit), heading = Math.atan2(d.x, -d.z);
+    const onStreet = Math.abs(state.x - from.x) < 8, past = dot({ x: state.x - P.driveway.x, z: state.z - P.driveway.z }, d);
+    if (onStreet && past > 10 && Math.abs(wrap(state.heading - heading)) < .4) this.complete(t.situation, say);
+    else if (onStreet && past < -14 && Math.abs(wrap(state.heading - heading)) > 2.6) {
+      frame.judge.record('route', frame.time, state, 'Задание: выехать направо, выполнено: налево.', { situation: 'adjacent' });
+      this.complete(t.situation, say);
+    }
+  }
+
+  /** The car already on the roundabout: it arrives at the learner's entry about when they do and brakes for them. */
+  private updateCircling(frame: ExamFrame) {
+    const t = this.target, { state, dt } = frame, R = this.city.roundabout, node = this.city.nodes[R.node];
+    if (t?.situation === 'roundabout' && t.kind === 'node' && !this.spawned.has('round-car') && edgeKey(this.current) === edgeKey(entryOf(t)) && Math.abs(state.speed) > 1) {
+      const toNode = Math.hypot(node.x - state.x, node.z - state.z);
+      if (toNode < 75) {
+        this.spawned.add('round-car');
+        const d = unit(this.city.nodes[t.inFrom!], node), entry = Math.atan2(-d.z, -d.x);
+        const eta = Math.max(0, toNode - 15) / Math.max(Math.abs(state.speed), 5);
+        this.circling = { theta: entry + eta * RING_SPEED / R.lane + .15, speed: RING_SPEED, travelled: 0, entry, flagged: false };
+      }
+    }
+    const c = this.circling; if (!c) return;
+    const rel = { x: state.x - node.x, z: state.z - node.z }, dist = Math.hypot(rel.x, rel.z), thetaL = Math.atan2(rel.z, rel.x);
+    let gap = Infinity;
+    if (Math.abs(dist - R.lane) < 4) { const ahead = ((c.theta - thetaL) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI); if (ahead < Math.PI) gap = ahead * R.lane - 4.2; }
+    const desired = 2 + c.speed * 1.2;
+    const accel = 1.6 * (1 - (c.speed / RING_SPEED) ** 4 - (gap === Infinity ? 0 : (desired / Math.max(gap, .1)) ** 2));
+    // Braking hard for a learner who has just come in at their entry: they did not give way (PDD 13.11(1)).
+    if (accel < -FORCED_DECEL && c.speed > 1 && !c.flagged && Math.abs(wrap(thetaL - c.entry)) < .8) {
+      c.flagged = true;
+      frame.judge.record('yield', frame.time, state, 'Въезжая на круговое движение, вы не уступили автомобилю, который уже ехал по кругу.', { rule: 'ПДД 13.11(1)', ruleIds: ['13.11(1)', '1.2'], situation: this.currentSituation() ?? 'roundabout' });
+    }
+    c.speed = Math.max(0, c.speed + Math.max(-9, accel) * dt);
+    const step = c.speed * dt / R.lane; c.theta -= step; c.travelled += step;
+    if (c.travelled > 2.2 * Math.PI) this.circling = null;
+  }
+
+  /** Sign 4.3: round the island anticlockwise (seen from above), keeping it on the left. */
+  private judgeRoundabout(frame: ExamFrame) {
+    const { state } = frame, node = this.nodeAt(state);
+    if (node?.kind !== 'round' || Math.abs(state.speed) < 1) { this.wrongWay = 0; return; }
+    const rel = { x: state.x - node.x, z: state.z - node.z }, f = forwardOf(state.heading), dist = Math.hypot(rel.x, rel.z);
+    if (dist < this.city.roundabout.island + 1) return;
+    const turning = rel.x * f.z - rel.z * f.x;
+    this.wrongWay = turning > .45 * dist ? this.wrongWay + frame.dt : 0;
+    if (this.wrongWay > .6 && !this.wrongFlagged) {
+      this.wrongFlagged = true;
+      frame.judge.record('route', frame.time, state, 'По кольцу нужно двигаться против часовой стрелки, оставляя островок слева.', { title: 'Движение по кругу в обратном направлении', rule: 'Знак 4.3', ruleIds: ['sign-4.3'], situation: this.currentSituation() });
+    }
+  }
+
 }
 type VehiclePose = { x: number; z: number; heading: number };
 

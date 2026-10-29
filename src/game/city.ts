@@ -16,7 +16,7 @@ import type { TrafficLane } from './traffic.ts';
 // (lines -180, 0, 180) where the ring has priority.
 
 export type StreetKind = 'street' | 'avenue' | 'main' | 'tram' | 'ring';
-export type NodeKind = 'signal' | 'main' | 'tram' | 'equal' | 'ring' | 'bend';
+export type NodeKind = 'signal' | 'main' | 'tram' | 'equal' | 'ring' | 'bend' | 'round';
 export interface CityNode {
   id: string; x: number; z: number; kind: NodeKind; links: string[]; area: Rect;
   /** Height of the crossing above the plain, metres. */
@@ -26,6 +26,10 @@ export interface CityNode {
 }
 export interface CityEdge { id: string; a: string; b: string; kind: StreetKind; axis: 'x' | 'z'; width: number; lane: number; }
 export interface District { id: string; name: string; area: Rect; }
+/** Unregulated pedestrian crossing in the middle of a street (signs 5.19.1/5.19.2). */
+export interface Zebra { edge: [string, string]; rect: Rect; axis: 'x' | 'z'; at: Point; }
+/** Car park by the start street: the learner leaves it onto the avenue (adjacent territory, PDD 8.3). */
+export interface Parking { area: Rect; driveway: Rect; spawn: { x: number; z: number; heading: number }; exit: [string, string]; stalls: Point[]; }
 export interface CityLayout {
   spacing: number;
   nodes: Record<string, CityNode>;
@@ -35,6 +39,10 @@ export interface CityLayout {
   lots: Rect[];
   tracks: { offset: number; from: number; to: number }[];
   districts: District[];
+  zebras: Zebra[];
+  parking: Parking;
+  /** Roundabout crossings: centre island radius and the ring lane radius. */
+  roundabout: { node: string; island: number; lane: number };
   /** Raised ground the Upper Town stands on. */
   plateaus: (Rect & { y: number })[];
   /** Ground height at a point: streets climb linearly between crossings of different height. */
@@ -52,9 +60,14 @@ const EXITS = [-180, 0, 180];
 const RING_STOPS = [-360, -270, -180, -90, 0, 90, 180, 270, 360];
 export const RING_LIMIT = 70;
 const HILL = { minX: 90, maxX: 270, minZ: -270, maxZ: -180, y: 9 };
+// 16 m roads have two lanes each way (4 m): `lane` is the centre of the right-hand one; the left one is at lane - 4.
 const STREETS: Record<StreetKind, { width: number; lane: number }> = {
-  street: { width: 12, lane: 3 }, avenue: { width: 16, lane: 4 }, main: { width: 16, lane: 4 }, tram: { width: 22, lane: 7 }, ring: { width: 16, lane: 4 },
+  street: { width: 12, lane: 3 }, avenue: { width: 16, lane: 6 }, main: { width: 16, lane: 6 }, tram: { width: 22, lane: 7 }, ring: { width: 16, lane: 6 },
 };
+/** The Upper Town crossing that is a roundabout (sign 4.3): a 30 m box, island of 5 m, one ring lane around it. */
+const ROUND = { node: 'n180_-270', half: 15, island: 5, lane: 10 };
+/** Mid-block zebras on quiet streets, away from the ramps. */
+const ZEBRAS: [string, string][] = [['n-90_0', 'n-90_90'], ['n90_0', 'n90_90'], ['n-180_-180', 'n-90_-180'], ['n-270_90', 'n-270_180'], ['n180_90', 'n180_180']];
 const columnKind = (x: number): StreetKind => x === 0 ? 'avenue' : 'street';
 // The central cross street is wide enough to turn back in one go; U-turns are staged there.
 const rowKind = (z: number): StreetKind => z === -90 ? 'main' : z === 90 ? 'tram' : z === 0 ? 'avenue' : 'street';
@@ -68,6 +81,7 @@ export const rightOf = (d: Point) => ({ x: -d.z, z: d.x });
 const onHill = (x: number, z: number) => x >= HILL.minX && x <= HILL.maxX && z >= HILL.minZ && z <= HILL.maxZ;
 
 function nodeKind(x: number, z: number): NodeKind {
+  if (nodeId(x, z) === ROUND.node) return 'round';
   if (Math.abs(x) === RING || Math.abs(z) === RING) return (EXITS.includes(x) || EXITS.includes(z)) && Math.abs(x) !== Math.abs(z) ? 'ring' : 'bend';
   const inner = Math.abs(x) < 270 && Math.abs(z) < 270;
   if (x === 0 && inner) return 'signal';
@@ -80,6 +94,7 @@ export function buildCity(): CityLayout {
   const nodes: Record<string, CityNode> = {};
   const addNode = (x: number, z: number, cw: number, rw: number) => {
     const kind = nodeKind(x, z);
+    if (kind === 'round') cw = rw = ROUND.half * 2;
     nodes[nodeId(x, z)] = { id: nodeId(x, z), x, z, kind, links: [], area: { x, z, halfX: cw / 2, halfZ: rw / 2 }, y: onHill(x, z) ? HILL.y : 0,
       mainAxis: kind === 'main' ? 'x' : kind === 'ring' ? (Math.abs(x) === RING ? 'z' : 'x') : undefined };
   };
@@ -126,6 +141,7 @@ export function buildCity(): CityLayout {
       });
       const facing = { x: -dir.x, z: -dir.z }, curb = edge.width / 2 + 1.6;
       // Priority signs: 2.1 on the main road and the ring, 2.4 on the roads that join them.
+      if (node.kind === 'round') signs.push({ id: `${id}-round`, code: '4.3', at: at(half + 3, curb), facing });
       if (node.kind === 'main' || node.kind === 'ring') signs.push({ id: `${id}-priority`, code: (dir.x !== 0) === (node.mainAxis === 'x') ? '2.1' : '2.4', at: at(half + 3, curb), facing });
       // Tram crossing warning on the streets that cross the tram avenue.
       if (node.kind === 'tram' && dir.z !== 0) signs.push({ id: `${id}-tram`, code: '1.5', at: at(40, curb), facing });
@@ -152,10 +168,29 @@ export function buildCity(): CityLayout {
     }
   }
 
+  // Zebras: stripes across the street mid-block, 5.19.1 on the right of each direction just before them.
+  const zebras: Zebra[] = ZEBRAS.map(([a, b]) => {
+    const e = edgeBetween(a, b)!, na = nodes[a], nb = nodes[b], at = { x: (na.x + nb.x) / 2, z: (na.z + nb.z) / 2 };
+    const rect = e.axis === 'x' ? { x: at.x, z: at.z, halfX: CROSSWALK_WIDTH / 2, halfZ: e.width / 2 } : { x: at.x, z: at.z, halfX: e.width / 2, halfZ: CROSSWALK_WIDTH / 2 };
+    for (const [from, to] of [[na, nb], [nb, na]]) {
+      const dir = unit(from, to), right = rightOf(dir), back = CROSSWALK_WIDTH / 2 + .6, side = e.width / 2 + 1.6;
+      signs.push({ id: `zebra-${from.id}-${to.id}`, code: '5.19.1', at: { x: at.x - dir.x * back + right.x * side, z: at.z - dir.z * back + right.z * side }, facing: { x: -dir.x, z: -dir.z } });
+    }
+    crosswalks.push(rect);
+    return { edge: [a, b], rect, axis: e.axis, at };
+  });
+  // Car park east of the avenue between the crossings at z 180 and 90; the driveway meets the northbound lanes.
+  const parking: Parking = {
+    area: { x: 34, z: 135, halfX: 16, halfZ: 14 }, driveway: { x: 13, z: 135, halfX: 5.5, halfZ: 3.5 },
+    spawn: { x: 30, z: 132.5, heading: -Math.PI / 2 }, exit: ['n0_180', 'n0_90'],
+    stalls: [{ x: 26, z: 125 }, { x: 34, z: 125 }, { x: 42, z: 125 }, { x: 42, z: 145 }, { x: 26, z: 145 }],
+  };
+
   const roads: Rect[] = edges.map(e => {
     const a = nodes[e.a], b = nodes[e.b];
     return e.axis === 'x' ? { x: (a.x + b.x) / 2, z: a.z, halfX: Math.abs(b.x - a.x) / 2 + e.width / 2, halfZ: e.width / 2 } : { x: a.x, z: (a.z + b.z) / 2, halfX: e.width / 2, halfZ: Math.abs(b.z - a.z) / 2 + e.width / 2 };
   });
+  roads.push(parking.area, parking.driveway);
   const map: RoadMap = { roads, intersections: Object.values(nodes).map(n => ({ id: n.id, area: n.area })), approaches, crosswalks, speedZones, defaultLimit: 60 };
 
   // Building lots: cells between the grid lines (plus a frame outside the ring), kept clear of the streets around them.
@@ -167,7 +202,15 @@ export function buildCity(): CityLayout {
     const xa = bounds[i], xb = bounds[i + 1], za = bounds[j], zb = bounds[j + 1], mx = (xa + xb) / 2, mz = (za + zb) / 2;
     const x0 = xa + margin({ x: xa, z: mz }, 'x'), x1 = xb - margin({ x: xb, z: mz }, 'x');
     const z0 = za + margin({ x: mx, z: za }, 'z'), z1 = zb - margin({ x: mx, z: zb }, 'z');
-    lots.push({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, halfX: (x1 - x0) / 2, halfZ: (z1 - z0) / 2 });
+    let lot = { x0, x1, z0, z1 };
+    // Trim corners that would overlap a wide junction (the roundabout) or the car park: cut the side that loses less.
+    for (const r of [...Object.values(nodes).map(n => ({ ...n.area, halfX: n.area.halfX + 4, halfZ: n.area.halfZ + 4 })), { ...parking.area, halfX: parking.area.halfX + 3, halfZ: parking.area.halfZ + 3 }]) {
+      const ox = Math.min(lot.x1, r.x + r.halfX) - Math.max(lot.x0, r.x - r.halfX), oz = Math.min(lot.z1, r.z + r.halfZ) - Math.max(lot.z0, r.z - r.halfZ);
+      if (ox <= 0 || oz <= 0) continue;
+      if (ox * (lot.z1 - lot.z0) < oz * (lot.x1 - lot.x0)) { if (r.x < (lot.x0 + lot.x1) / 2) lot = { ...lot, x0: r.x + r.halfX }; else lot = { ...lot, x1: r.x - r.halfX }; }
+      else { if (r.z < (lot.z0 + lot.z1) / 2) lot = { ...lot, z0: r.z + r.halfZ }; else lot = { ...lot, z1: r.z - r.halfZ }; }
+    }
+    if (lot.x1 - lot.x0 > 4 && lot.z1 - lot.z0 > 4) lots.push({ x: (lot.x0 + lot.x1) / 2, z: (lot.z0 + lot.z1) / 2, halfX: (lot.x1 - lot.x0) / 2, halfZ: (lot.z1 - lot.z0) / 2 });
   }
 
   const plateaus = [{ x: (HILL.minX + HILL.maxX) / 2, z: (HILL.minZ + HILL.maxZ) / 2, halfX: (HILL.maxX - HILL.minX) / 2 + 6, halfZ: (HILL.maxZ - HILL.minZ) / 2 + 6, y: HILL.y }];
@@ -194,7 +237,8 @@ export function buildCity(): CityLayout {
     { id: 'ring', name: 'Окружная', area: { x: 0, z: 0, halfX: RING + 8, halfZ: RING + 8 } },
   ];
   return {
-    spacing: SPACING, nodes, edges, map, signs, lots, districts, plateaus, height,
+    spacing: SPACING, nodes, edges, map, signs, lots, districts, plateaus, height, zebras, parking,
+    roundabout: { node: ROUND.node, island: ROUND.island, lane: ROUND.lane },
     tracks: [{ offset: 90 + TRACK_OFFSET, from: -275, to: 275 }, { offset: 90 - TRACK_OFFSET, from: -275, to: 275 }],
     approach: (node, from) => {
       const n = nodes[node], f = nodes[from]; if (!n || !f) return undefined;
@@ -210,18 +254,20 @@ export const edgeLength = (city: CityLayout, a: string, b: string) => Math.hypot
 
 /** Looping AI lanes: both directions of the main road, the signal avenue and each side of the ring, with every stop line they meet. */
 export function cityLanes(city: CityLayout): TrafficLane[] {
+  // Through traffic keeps to the right-hand of the two lanes.
+  const LANE = STREETS.avenue.lane;
   const along = (axis: 'x' | 'z', sign: 1 | -1, line: number, lane: number, id: string, start: number, end: number): TrafficLane => {
     const offset = line + (axis === 'x' ? sign * lane : -sign * lane);
     const dir = axis === 'x' ? { x: sign, z: 0 } : { x: 0, z: sign };
     const approaches = city.map.approaches.filter(a => a.dir.x === dir.x && a.dir.z === dir.z && Math.abs((axis === 'x' ? a.stopLine[0].z : a.stopLine[0].x) - line) < lane + 4);
     return { id, axis, sign, offset, start, end, loop: true, approaches };
   };
-  const lanes = [along('x', 1, -90, 4, 'main-e', -280, 280), along('x', -1, -90, 4, 'main-w', -280, 280), along('z', -1, 0, 4, 'avenue-n', -350, 350), along('z', 1, 0, 4, 'avenue-s', -350, 350)];
+  const lanes = [along('x', 1, -90, LANE, 'main-e', -280, 280), along('x', -1, -90, LANE, 'main-w', -280, 280), along('z', -1, 0, LANE, 'avenue-n', -350, 350), along('z', 1, 0, LANE, 'avenue-s', -350, 350)];
   // Ring cars wrap at the corners: each side is its own loop, ending just short of the corner crossing.
   for (const side of [-RING, RING]) {
     const tag = side < 0 ? 'w' : 'e', row = side < 0 ? 'n' : 's';
-    lanes.push(along('z', 1, side, 4, `ring-${tag}-s`, -348, 348), along('z', -1, side, 4, `ring-${tag}-n`, -348, 348));
-    lanes.push(along('x', 1, side, 4, `ring-${row}-e`, -348, 348), along('x', -1, side, 4, `ring-${row}-w`, -348, 348));
+    lanes.push(along('z', 1, side, LANE, `ring-${tag}-s`, -348, 348), along('z', -1, side, LANE, `ring-${tag}-n`, -348, 348));
+    lanes.push(along('x', 1, side, LANE, `ring-${row}-e`, -348, 348), along('x', -1, side, LANE, `ring-${row}-w`, -348, 348));
   }
   return lanes;
 }

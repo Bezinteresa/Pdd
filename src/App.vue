@@ -5,7 +5,7 @@ import { DrivingEngine, type CameraMode, type GameSettings, type Look, type Tele
 import type { Gear } from './game/vehicle';
 import { lessons } from './game/lesson';
 import { lampLabel } from './game/signals';
-import { practiceOrder, practiceScenes, readySituations, situationOutcome, situations, type Situation, type SituationOutcome } from './game/exam';
+import { practiceHint, practiceOrder, readySituations, situationOutcome, situations, type Situation, type SituationOutcome } from './game/exam';
 import { ruleTexts, PDD_EDITION } from './game/pddText';
 import type { Violation } from './game/rules';
 import SituationSchema from './SituationSchema.vue';
@@ -101,7 +101,7 @@ function openPracticeItem(item: PracticeItem) {
   startPractice(item.id);
 }
 function startPractice(id: string) {
-  if (!engine || !practiceScenes[id]) return;
+  if (!engine || !readySituations.some(s => s.id === id)) return;
   showDebrief.value = false; showPracticeList.value = false; showExamPicker.value = false; examReport.value = null;
   telemetry.exam = null; telemetry.violations = [];
   engine.startPractice(id); steerDegrees.value = 0; looking.value = 'forward';
@@ -299,13 +299,13 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         <button :class="{ active: tab === 'rules' }" @click="tab = 'rules'"><Icon name="book" />Правила</button>
         <button :class="{ active: tab === 'progress' }" @click="tab = 'progress'"><Icon name="chart" />Прогресс</button>
       </nav>
-      <div class="header-right"><span class="prototype"><i></i> ВЕРСИЯ 0.9</span><button class="icon-button" aria-label="Настройки" @click="showSettings = true"><Icon name="gear" /></button></div>
+      <div class="header-right"><span class="prototype"><i></i> ВЕРСИЯ 1.0</span><button class="icon-button" aria-label="Настройки" @click="showSettings = true"><Icon name="gear" /></button></div>
     </header>
 
     <main v-show="tab === 'practice'" class="practice-layout">
       <section class="simulator" :class="{ 'has-bubble': examView ? !telemetry.exam?.finished : !telemetry.completed }" aria-label="Симулятор вождения" @mousedown="keepKeyboard">
         <div ref="canvasHost" class="canvas-host"></div>
-        <div class="scene-heading"><span class="eyebrow">ПРАКТИЧЕСКОЕ ЗАНЯТИЕ</span><h1>{{ examView ? 'Экзамен с инспектором' : lesson.heading }}</h1><div class="location"><Icon name="pin" :size="14" /> Учебный квартал <span>•</span> Сухая дорога <Icon name="sun" :size="14" /></div></div>
+        <div class="scene-heading"><span class="eyebrow">ПРАКТИЧЕСКОЕ ЗАНЯТИЕ</span><h1>{{ practiceSituation ? practiceSituation.title : examView ? 'Экзамен с инспектором' : lesson.heading }}</h1><div class="location"><Icon name="pin" :size="14" /> {{ telemetry.mapKind === 'city' ? 'Город' : 'Учебный квартал' }} <span>•</span> Сухая дорога <Icon name="sun" :size="14" /></div></div>
         <div v-if="fsHint" class="fs-hint" aria-hidden="true"><span class="fs-hint-frame"></span><span class="fs-hint-label">На весь экран</span></div><div class="scene-tools"><button class="glass-button" aria-label="Помощь по управлению" @click="showHelp = true"><Icon name="help" /></button><button class="glass-button fullscreen-button" :class="{ hinted: fsHint }" aria-label="Полный экран" @click="fullscreen"><Icon name="full" /></button></div>
         <div class="camera-switch"><button :class="{ selected: cameraMode === 'cockpit' }" @click="applyCamera('cockpit')">Из кабины</button><button :class="{ selected: cameraMode === 'chase' }" @click="applyCamera('chase')">От третьего лица</button></div>
 
@@ -334,7 +334,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         </div>
         <div v-if="telemetry.violations.length" :key="telemetry.violations.length" class="violation-chip" :title="telemetry.violations[telemetry.violations.length - 1].title"><Icon name="hazard" :size="14" />{{ telemetry.violations.length }}</div>
         <div v-if="looking !== 'forward'" class="return-look"><button class="glass-button" @click="look('forward')"><Icon name="camera" :size="16" /> Взгляд вперёд</button></div>
-        <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">{{ practiceId ? `ПРАКТИКА · ${practiceSituation?.topic ?? ''}` : `ИНСПЕКТОР · ${Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length)}/${telemetry.exam.steps.length}` }}</span>{{ telemetry.exam.command }}<small v-if="practiceId && telemetry.speed < 6" class="inspector-hint">{{ practiceScenes[practiceId]?.hint }}</small></div>
+        <div v-if="telemetry.exam && !telemetry.exam.finished" class="inspector-bubble" role="status"><span class="inspector-badge">{{ practiceId ? `ПРАКТИКА · ${practiceSituation?.topic ?? ''}` : `ИНСПЕКТОР · ${Math.min(telemetry.exam.stepIndex + 1, telemetry.exam.steps.length)}/${telemetry.exam.steps.length}` }}</span>{{ telemetry.exam.command }}<small v-if="practiceId && telemetry.speed < 6" class="inspector-hint">{{ practiceHint(practiceId) }}</small></div>
         <div v-else-if="!examView && !telemetry.completed" class="inspector-bubble task-bubble" role="status"><span class="inspector-badge">ЗАДАНИЕ · {{ Math.min(telemetry.lessonStep + 1, steps.length) }}/{{ steps.length }}</span>{{ steps[Math.min(telemetry.lessonStep, steps.length - 1)] }}</div>
         <div v-if="message" class="toast" role="status">{{ message }}</div>
         <div v-if="fatal" class="fatal-state"><Icon name="hazard" :size="32" /><p>{{ fatal }}</p></div>
@@ -352,7 +352,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         </div>
 
         <div v-if="!playing && !fatal" class="paused-label"><span>{{ started ? 'ПОЕЗДКА НА ПАУЗЕ' : 'ВСЁ НАЧИНАЕТСЯ С ПЕРВОГО МЕТРА' }}</span><div class="lesson-picker" aria-label="Выбор занятия"><button v-for="(item, index) in lessons" :key="item.id" :class="{ selected: lessonIndex === index }" @click="selectLesson(index)">{{ (index + 1).toString().padStart(2, '0') }} · {{ item.title }}</button><button class="practice-entry" :class="{ selected: !!practiceId }" @click="showPracticeList = true">Ситуации по очереди</button><button class="exam-entry" :class="{ selected: examView && !practiceId }" @click="showExamPicker = true">Экзамен с инспектором</button></div><button @click="play"><Icon name="play" :size="17" />{{ started ? 'Продолжить' : 'За руль' }}</button></div>
-        <footer class="scene-footer"><span><i></i> {{ playing ? 'Поездка идёт' : 'Готов к поездке' }}</span><span>{{ telemetry.fps }} FPS <b>·</b> WEB 0.9</span></footer>
+        <footer class="scene-footer"><span><i></i> {{ playing ? 'Поездка идёт' : 'Готов к поездке' }}</span><span>{{ telemetry.fps }} FPS <b>·</b> WEB 1.0</span></footer>
       </section>
 
       <aside class="lesson-panel">
@@ -361,7 +361,7 @@ onBeforeUnmount(() => { clearTimeout(toastTimer); clearInterval(tickTimer); wind
         <ol class="lesson-steps"><li v-for="(step, index) in steps" :key="step" :class="{ done: telemetry.lessonStep > index, current: telemetry.lessonStep === index }"><span class="step-circle"><Icon v-if="telemetry.lessonStep > index" name="check" :size="13"/><template v-else>{{ index + 1 }}</template></span><span>{{ step }}</span></li></ol>
         <div class="instructor-note"><span class="note-icon"><Icon :name="telemetry.completed ? 'flag' : 'help'" :size="18" /></span><div><strong>{{ telemetry.completed ? (telemetry.violations.length ? 'Есть над чем поработать' : 'Урок пройден!') : 'Подсказка инструктора' }}</strong><p>{{ instructorText }}</p></div></div>
         </template><template v-else-if="practiceSituation"><div class="lesson-panel-top"><span class="eyebrow">ПРАКТИКА ПО СИТУАЦИЯМ · {{ practiceOrder.indexOf(practiceSituation.id) + 1 }}/{{ practiceOrder.length }}</span><h2>{{ practiceSituation.title }}</h2><p>{{ practiceSituation.summary }}</p><div class="lesson-tags"><span>{{ practiceSituation.topic }}</span><span v-for="tag in practiceRuleTags" :key="tag">{{ tag }}</span></div></div>
-        <div class="instructor-note"><span class="note-icon"><Icon name="help" :size="18" /></span><div><strong>Подсказка</strong><p>{{ practiceScenes[practiceSituation.id].hint }}</p></div></div>
+        <div class="instructor-note"><span class="note-icon"><Icon name="help" :size="18" /></span><div><strong>Подсказка</strong><p>{{ practiceHint(practiceSituation.id) }}</p></div></div>
         </template><template v-else><div class="lesson-panel-top"><span class="eyebrow">ПРАКТИЧЕСКИЙ ЭКЗАМЕН</span><h2>Экзамен<br>с инспектором</h2><p>Выполняйте команды инспектора. Ошибки разберём после финиша.</p><div v-if="telemetry.mapKind === 'city' && telemetry.exam" class="panel-map"><CityMap :city="cityLayout" :pose="telemetry.pose" :route="telemetry.exam.route" :target="telemetry.exam.target" /></div><div class="lesson-tags"><span v-for="id in telemetry.exam!.selected" :key="id">{{ situations.find(s => s.id === id)?.topic }}</span></div></div>
         <ol class="lesson-steps exam-steps"><li v-for="(step, index) in telemetry.exam!.steps" :key="index" :class="{ done: telemetry.exam!.stepIndex > index, current: telemetry.exam!.stepIndex === index }"><span class="step-circle"><Icon v-if="telemetry.exam!.stepIndex > index" name="check" :size="13"/><template v-else>{{ index + 1 }}</template></span><span>{{ step.command }}</span></li></ol>
         </template><section class="trip-log" aria-label="Журнал поездки"><div class="trip-log-head"><span class="eyebrow">ЖУРНАЛ ПОЕЗДКИ</span><span>{{ telemetry.violations.length ? `${telemetry.violations.length} наруш.` : 'без нарушений' }}</span></div><ol v-if="telemetry.violations.length"><li v-for="item in [...telemetry.violations].reverse()" :key="item.id"><strong>{{ item.title }}</strong><p>{{ item.detail }}</p><small>{{ formatTime(item.time) }}<template v-if="item.rule"> · <button v-for="id in item.ruleIds" :key="id" class="rule-link" @click="openRule(id)">{{ ruleLabel(id) }}</button></template></small></li></ol><p v-else class="trip-log-empty">Судья следит за ремнём, скоростью, сигналами светофора, поворотниками и выездом с проезжей части.</p></section>

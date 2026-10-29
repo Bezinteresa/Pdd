@@ -17,6 +17,8 @@ export interface Schema {
   player: Maneuver;
   actors: { from: Compass; maneuver: Maneuver; kind: 'car' | 'tram' | 'pedestrian' }[];
   signs?: string[]; regulator?: boolean; light?: boolean;
+  /** One road with two lanes each way; the learner moves to the left lane, a car comes up in it from behind. */
+  laneChange?: boolean;
 }
 export interface Situation {
   id: string; title: string; topic: string; summary: string; slots: SlotId[]; ruleIds: string[];
@@ -51,21 +53,31 @@ export const situations: Situation[] = [
   { id: 'u-turn', title: 'Разворот вне перекрёстка', topic: 'Разворот', slots: ['U'], ruleIds: ['8.1', '8.5', '8.8', '8.11'], status: 'ready',
     summary: 'Разворот по команде инспектора: указатель, крайнее левое положение, без выезда за проезжую часть.',
     schema: { junction: 'road', player: 'uturn', actors: [] } },
+  // Situations staged only in the city (practice runs there too): they need the zebras, the car park, the roundabout, two lanes.
+  { id: 'crosswalk', title: 'Нерегулируемый пешеходный переход', topic: 'Пешеходы', slots: [], ruleIds: ['14.1'], status: 'ready',
+    summary: 'Пешеход вступил на «зебру» без светофора. Уступите ему дорогу: остановитесь и дождитесь, пока он перейдёт.',
+    schema: { junction: 'road', player: 'straight', actors: [{ from: 'E', maneuver: 'straight', kind: 'pedestrian' }] } },
+  { id: 'adjacent', title: 'Выезд с прилегающей территории', topic: 'Манёвры', slots: [], ruleIds: ['8.3'], status: 'ready',
+    summary: 'Экзамен начинается на парковке. Выезжая на дорогу, уступите машинам на ней и пешеходу на тротуаре.' },
+  { id: 'roundabout', title: 'Круговое движение', topic: 'Перекрёстки', slots: [], ruleIds: ['13.11(1)', 'sign-4.3'], status: 'ready',
+    summary: 'Кольцо со знаком 4.3: уступите тем, кто уже едет по кругу, двигайтесь против часовой стрелки и уйдите в нужный съезд.' },
+  { id: 'lane-change', title: 'Перестроение', topic: 'Манёвры', slots: [], ruleIds: ['8.1', '8.4'], status: 'ready',
+    summary: 'По команде инспектора перестройтесь в соседнюю полосу: поворотник заранее и пропустить попутную машину в той полосе.',
+    schema: { junction: 'road', player: 'straight', laneChange: true, actors: [{ from: 'S', maneuver: 'straight', kind: 'car' }] } },
   // Topics frequent in the exam tickets that need new road elements; listed so the catalogue shows what comes next.
   { id: 'green-left-oncoming', title: 'Налево на зелёный: встречные', topic: 'Светофор', slots: [], ruleIds: ['13.4'], status: 'planned', summary: 'Поворот налево на регулируемом перекрёстке с пропуском встречных.' },
   { id: 'arrow-section', title: 'Дополнительная секция светофора', topic: 'Светофор', slots: [], ruleIds: [], status: 'planned', summary: 'Движение по стрелке при красном сигнале, п. 13.5.' },
   { id: 'flashing-yellow', title: 'Мигающий жёлтый, светофор не работает', topic: 'Светофор', slots: [], ruleIds: [], status: 'planned', summary: 'Перекрёсток становится нерегулируемым, п. 13.3.' },
   { id: 'main-road-turns', title: 'Главная дорога меняет направление', topic: 'Главная и второстепенная', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 2.1 с табличкой 8.13, п. 13.10.' },
-  { id: 'roundabout', title: 'Круговое движение', topic: 'Перекрёстки', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 4.3, п. 13.11(1).' },
+
   { id: 'regulator-tram', title: 'Трамвай и регулировщик', topic: 'Трамвай', slots: [], ruleIds: [], status: 'planned', summary: 'Разные разрешения трамваю и безрельсовым ТС, п. 6.10, 13.6.' },
   { id: 'tram-left-turn', title: 'Налево с трамвайных путей', topic: 'Трамвай', slots: [], ruleIds: [], status: 'planned', summary: 'Поворот налево с путей попутного направления, п. 8.5.' },
-  { id: 'crosswalk', title: 'Нерегулируемый пешеходный переход', topic: 'Пешеходы', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 5.19.1/5.19.2, п. 14.1–14.2.' },
+
   { id: 'railway', title: 'Железнодорожный переезд', topic: 'Переезды', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 15 ПДД, знаки 1.1–1.4.' },
   { id: 'overtaking', title: 'Обгон и встречная полоса', topic: 'Обгон', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 11, разметка 1.1, знак 3.20.' },
   { id: 'stopping', title: 'Остановка и стоянка', topic: 'Остановка и стоянка', slots: [], ruleIds: [], status: 'planned', summary: 'Раздел 12, знаки 3.27–3.30.' },
   { id: 'lanes', title: 'Направления по полосам', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 5.15.1, 5.15.2, п. 8.5.' },
-  { id: 'lane-change', title: 'Перестроение', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'Уступить попутным, п. 8.4.' },
-  { id: 'adjacent', title: 'Выезд с прилегающей территории', topic: 'Манёвры', slots: [], ruleIds: [], status: 'planned', summary: 'П. 8.3.' },
+
   { id: 'one-way', title: 'Одностороннее движение, въезд запрещён', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 3.1, 5.5–5.7.' },
   { id: 'no-turn', title: 'Запрет поворота и разворота', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знаки 3.18.1, 3.18.2, 3.19.' },
   { id: 'residential', title: 'Жилая зона', topic: 'Знаки', slots: [], ruleIds: [], status: 'planned', summary: 'Знак 5.21, раздел 17.' },
@@ -136,7 +148,16 @@ export const practiceScenes: Record<string, PracticeScene> = {
   'u-turn': { spawn: { x: -4.5, z: 24, heading: south }, step: { kind: 'uturn', slot: 'U', command: 'Развернитесь в удобном месте, где это разрешено.' }, hint: 'Включите левый поворотник, прижмитесь к середине дороги и разворачивайтесь, не задевая бордюр.' },
 };
 /** Order of the practice list: from the simplest and most frequent topics in the tickets to the hardest. */
-export const practiceOrder = ['a1-signal', 'a2-pedestrian', 'b-right-hand', 'b-oncoming', 'd-yield', 'd-stop', 'b-tram', 'a-regulator', 'u-turn'];
+export const practiceOrder = ['a1-signal', 'a2-pedestrian', 'crosswalk', 'adjacent', 'b-right-hand', 'b-oncoming', 'd-yield', 'd-stop', 'lane-change', 'roundabout', 'b-tram', 'a-regulator', 'u-turn'];
+/** Hints for the situations practised in the city. */
+const cityHints: Record<string, string> = {
+  crosswalk: 'Впереди «зебра» без светофора. Если пешеход переходит или уже ступил на дорогу — тормозите и пропустите его.',
+  adjacent: 'Вы на парковке. Пропустите пешехода на тротуаре и машины на проспекте, только потом выезжайте направо.',
+  roundabout: 'Знак 4.3: на кольце главные те, кто уже едет по кругу. Уступите им, двигайтесь против часовой стрелки, третий съезд — налево.',
+  'lane-change': 'Сначала поворотник, потом посмотрите в зеркало: пропустите машину, которая едет по соседней полосе, и плавно перестройтесь.',
+};
+/** The hint shown before a practice run, wherever it is staged. */
+export const practiceHint = (id: string) => practiceScenes[id]?.hint ?? cityHints[id] ?? '';
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 export function classifyManeuver(entryHeading: number, exitHeading: number): Maneuver {
@@ -161,7 +182,7 @@ export function situationOutcome(progress: SituationProgress, errors: number): S
 }
 
 /** A pedestrian shuttling along a crosswalk: it walks along x or z between `min` and `max`. */
-export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; axis?: 'x' | 'z'; min?: number; max?: number; }
+export interface Pedestrian { x: number; z: number; dir: 1 | -1; speed: number; waiting: boolean; axis?: 'x' | 'z'; min?: number; max?: number; situation?: string; }
 
 /**
  * Whether a moving car on the crossing fails to yield to this pedestrian: the pedestrian is in front of the car or still
@@ -186,6 +207,9 @@ export interface ExamSession {
   readonly finished: boolean;
   readonly failReason: string | null;
   readonly pedestrians: Pedestrian[];
+  /** Staged vehicles that are not on straight lanes (the car on the roundabout), drawn and collided with by the engine. */
+  actors?(): { id: string; x: number; z: number; heading: number; color: string }[];
+  obstacles?(): Rect[];
   /** What the inspector says now. */
   readonly command: string;
   progress(id: string): SituationProgress;

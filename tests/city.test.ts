@@ -26,7 +26,7 @@ test('city road map passes the map checks; stop lines and signs sit on or beside
   assert.deepEqual(validateMap(city.map), []);
   for (const a of city.map.approaches) assert.ok(a.stopLine.every(p => onRoad(city.map, p)), a.id);
   assert.equal(city.map.approaches.filter(a => a.control === 'signal').length, 20);
-  assert.equal(city.map.crosswalks.length, 20);
+  assert.equal(city.map.crosswalks.length, 20 + city.zebras.length);
 });
 
 test('priority signs address the right drivers', () => {
@@ -40,8 +40,8 @@ test('priority signs address the right drivers', () => {
 test('AI lanes run in the right-hand lane and know the signals they pass', () => {
   const lanes = cityLanes(city);
   const byId = Object.fromEntries(lanes.map(l => [l.id, l]));
-  assert.equal(byId['main-e'].offset, -86);
-  assert.equal(byId['avenue-n'].offset, 4);
+  assert.equal(byId['main-e'].offset, -84);
+  assert.equal(byId['avenue-n'].offset, 6);
   assert.deepEqual(byId['avenue-n'].approaches!.filter(a => a.control === 'signal').map(a => a.intersection).sort(), ['n0_-180', 'n0_-90', 'n0_0', 'n0_180', 'n0_90']);
   assert.deepEqual(byId['main-e'].approaches!.filter(a => a.control === 'signal').map(a => a.intersection), ['n0_-90']);
 });

@@ -69,11 +69,17 @@ function speedSign(scene: THREE.Scene, x: number, z: number, value: string) {
   circle(.7, '#b84033', 0); circle(.56, '#fffdf4', .005);
   const label = new THREE.Mesh(new THREE.PlaneGeometry(.92, .66), new THREE.MeshBasicMaterial({ map: textTexture(value, '#fffdf4', '#24332e'), side: THREE.DoubleSide })); label.position.set(x, 2.55, z + .01); scene.add(label);
 }
-function parkedCar(scene: THREE.Scene, x: number, z: number, color: string, obstacles: Obstacle[]) {
+export function parkedCar(scene: THREE.Scene, x: number, z: number, color: string, obstacles: Obstacle[]) {
   const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
   box(g, 1.8, .65, 3.8, 0, .7, 0, color); box(g, 1.55, .65, 1.9, 0, 1.28, .05, '#546d70');
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, .22, .5, .62, sx * .86, .35, sz * 1.2, '#263431');
   obstacles.push({ x, z, halfX: .95, halfZ: 2 });
+}
+/** Roundabout island: a kerb ring, grass and a tree in the middle. */
+export function island(scene: THREE.Scene, x: number, z: number, radius: number) {
+  const kerb = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, .28, 40), material('#c0c5b5')); kerb.position.set(x, .14, z); scene.add(kerb);
+  const grass = new THREE.Mesh(new THREE.CylinderGeometry(radius - .45, radius - .45, .32, 40), material('#9bad91')); grass.position.set(x, .16, z); scene.add(grass);
+  tree(scene, x, z, 1);
 }
 type LampSlot = { approach: Approach; x: number; z: number; rotation: number };
 
@@ -331,6 +337,17 @@ function signTexture(code: string, value?: number) {
     ctx.beginPath(); ctx.arc(128, 128, 122, 0, Math.PI * 2); ctx.fillStyle = '#c8302a'; ctx.fill();
     ctx.beginPath(); ctx.arc(128, 128, 94, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
     ctx.fillStyle = '#1d2120'; ctx.font = '700 96px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(value ?? ''), 128, 134);
+  } else if (code === '4.3') {
+    ctx.beginPath(); ctx.arc(128, 128, 122, 0, Math.PI * 2); ctx.fillStyle = '#1f5fbf'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 20;
+    for (let i = 0; i < 3; i++) {
+      // Three arrows chasing each other anticlockwise.
+      const a0 = -Math.PI / 2 + i * 2 * Math.PI / 3, a1 = a0 - 1.45;
+      ctx.beginPath(); ctx.arc(128, 128, 66, a0, a1, true); ctx.stroke();
+      const tip = { x: 128 + Math.cos(a1 - .3) * 66, y: 128 + Math.sin(a1 - .3) * 66 };
+      ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
+      ctx.lineTo(128 + Math.cos(a1) * 92, 128 + Math.sin(a1) * 92); ctx.lineTo(128 + Math.cos(a1) * 40, 128 + Math.sin(a1) * 40); ctx.closePath(); ctx.fill();
+    }
   } else if (code === '2.5') {
     ctx.beginPath(); for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx.lineTo(128 + Math.cos(a) * 124, 128 + Math.sin(a) * 124); } ctx.closePath();
     ctx.fillStyle = '#c8302a'; ctx.fill(); ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.stroke();

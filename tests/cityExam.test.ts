@@ -5,6 +5,7 @@ import { CityExamRunner } from '../src/game/cityExam.ts';
 import { TripJudge } from '../src/game/rules.ts';
 import { TrafficSystem } from '../src/game/traffic.ts';
 import { initialVehicle, type VehicleState } from '../src/game/vehicle.ts';
+import { onRoad } from '../src/game/roads.ts';
 
 const city = buildCity();
 function setup(selected: string[]) {
@@ -76,5 +77,76 @@ test('city exam: after the last situation the learner is sent to a finish zone a
   v.speed = 0;
   for (let i = 0; i < 90; i++) ctx.exam.update({ prev: v, state: v, time: 80 + i / 60, dt: 1 / 60, traffic: ctx.traffic, forced: [], judge: ctx.judge });
   assert.equal(ctx.exam.finished, true);
+  assert.deepEqual(codes(ctx), []);
+});
+
+function practice(id: string) {
+  return { exam: new CityExamRunner(city, [id], undefined, id), judge: new TripJudge(city.map), traffic: new TrafficSystem(cityLanes(city), {}) };
+}
+/** Holds the car still for `seconds`, feeding the exam. */
+function wait(ctx: ReturnType<typeof setup>, v: VehicleState, seconds: number, t0: number) {
+  v.speed = 0;
+  for (let i = 0; i < seconds * 60; i++) ctx.exam.update({ prev: v, state: v, time: t0 + i / 60, dt: 1 / 60, traffic: ctx.traffic, forced: [], judge: ctx.judge });
+}
+
+test('city practice: every new situation has a place, and the car starts on the road facing it', () => {
+  for (const id of ['crosswalk', 'adjacent', 'roundabout', 'lane-change']) {
+    const ctx = practice(id), p = ctx.exam.spawn();
+    assert.equal(ctx.exam.plan.length, 1, id);
+    assert.ok(onRoad(city.map, p), `${id} spawn on road`);
+  }
+  assert.deepEqual(practice('adjacent').exam.spawn(), city.parking.spawn);
+});
+
+test('crosswalk (14.1): driving over the zebra while the pedestrian crosses is an error; waiting for them is not', () => {
+  const zebra = city.zebras[0], x = city.nodes[zebra.edge[0]].x - 3;
+  const rude = practice('crosswalk');
+  driveThrough(rude, [[x, 11], [x, 60]]);
+  assert.deepEqual(rude.judge.violations.map(v => v.ruleIds[0]), ['14.1']);
+  assert.equal(rude.exam.finished, true);
+
+  const polite = practice('crosswalk');
+  const v = driveThrough(polite, [[x, 11], [x, 38]]);
+  wait(polite, v, 10, 6);
+  driveThrough(polite, [[x, 38], [x, 60]], 20);
+  assert.deepEqual(codes(polite), []);
+  assert.equal(polite.exam.progress('crosswalk'), 'done');
+});
+
+test('lane change (8.1, 8.4): no signal and cutting in front of the car in that lane are both errors', () => {
+  const ctx = practice('lane-change');
+  const [u, w] = ctx.exam.plan[0].edge!, a = city.nodes[u], b = city.nodes[w];
+  const d = { x: Math.sign(b.x - a.x), z: Math.sign(b.z - a.z) }, r = { x: -d.z, z: d.x };
+  const at = (along: number, lateral: number): [number, number] => [a.x + d.x * along + r.x * lateral, a.z + d.z * along + r.z * lateral];
+  driveThrough(ctx, [at(10, 6), at(20, 6)]);
+  assert.match(ctx.exam.command, /левую полосу/);
+  // The car coming up in the left lane is right behind the learner when they move over.
+  const car = ctx.traffic.cars.find(c => c.lane.id === 'stage-lane-change')!;
+  car.s = (d.x ? at(20, 0)[0] * d.x : at(20, 0)[1] * d.z) - 6;
+  driveThrough(ctx, [at(20, 6), at(28, 2), at(40, 2)], 3);
+  assert.deepEqual(codes(ctx).sort(), ['turn-signal', 'yield']);
+  assert.equal(ctx.exam.finished, true);
+});
+
+test('roundabout (sign 4.3): going round clockwise is an error', () => {
+  const ctx = practice('roundabout');
+  const t = ctx.exam.plan[0], n = city.nodes[t.node!], from = city.nodes[t.inFrom!];
+  assert.equal(n.kind, 'round');
+  const d = { x: Math.sign(n.x - from.x), z: Math.sign(n.z - from.z) }, r = { x: -d.z, z: d.x };
+  const entry: [number, number] = [n.x - d.x * 20 + r.x * 3, n.z - d.z * 20 + r.z * 3];
+  // Clockwise: turn left at once and keep the island on the right.
+  const pts: [number, number][] = [entry];
+  for (let k = 0; k <= 8; k++) { const ang = Math.atan2(-d.z, -d.x) + k * .5; pts.push([n.x + Math.cos(ang) * 10, n.z + Math.sin(ang) * 10]); }
+  driveThrough(ctx, pts);
+  assert.ok(ctx.judge.violations.some(v => v.ruleIds.includes('sign-4.3')), codes(ctx).join());
+});
+
+test('adjacent (8.3): the exam starts in the car park; turning right onto the avenue completes the task', () => {
+  const ctx = setup(['adjacent', 'a1-signal']);
+  assert.equal(ctx.exam.plan[0].situation, 'adjacent');
+  assert.match(ctx.exam.command, /парковки направо/);
+  const p = city.parking;
+  driveThrough(ctx, [[p.spawn.x, p.spawn.z], [12, p.driveway.z], [6, p.driveway.z - 4], [6, p.driveway.z - 14], [6, p.driveway.z - 22]]);
+  assert.equal(ctx.exam.progress('adjacent'), 'done');
   assert.deepEqual(codes(ctx), []);
 });

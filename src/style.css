@@ -456,3 +456,6 @@ body{background:#fbf5ea}
 .drag-scrolling,.drag-scrolling *{cursor:grabbing!important;user-select:none!important}
 /* In-scene pause menu: restart the drive from the same place. */
 .paused-label>button.restart-entry{padding:8px 16px;font-size:12px;background:#fffaf2cc;color:var(--ink);box-shadow:0 3px 0 #e2d3b8}
+/* Free city drive: the first and widest choice in the pause menu. */
+.paused-label .lesson-picker button.free-entry{grid-column:1 / -1;background:#2f6f9c;color:#fffaf2}
+.paused-label .lesson-picker button.free-entry.selected{background:#d6e8f7;color:#244f73}

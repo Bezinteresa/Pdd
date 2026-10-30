@@ -459,3 +459,10 @@ body{background:#fbf5ea}
 /* Free city drive: the first and widest choice in the pause menu. */
 .paused-label .lesson-picker button.free-entry{grid-column:1 / -1;background:#2f6f9c;color:#fffaf2}
 .paused-label .lesson-picker button.free-entry.selected{background:#d6e8f7;color:#244f73}
+
+/* Violations: a button in the scene tools row that opens the trip log; bigger toast text. */
+.scene-tools{align-items:center}.scene-tools .violation-chip{position:static;border:0;cursor:pointer;height:34px;padding:0 12px;font:inherit;font-size:14px;font-weight:700}
+.violations-modal{max-height:85dvh;overflow:auto}.violations-modal ol{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:8px}.violations-modal li{padding:10px 12px;border-radius:10px;background:#f6efe6}.violations-modal li p{margin:4px 0}
+.toast{font-size:16px;padding:14px 22px;font-weight:600}
+@media(max-width:900px){.toast{font-size:14px}}
+@media(max-height:600px) and (orientation:landscape){.toast{font-size:13px;padding:10px 16px}.scene-tools .violation-chip{height:28px;font-size:12px;padding:0 9px}}

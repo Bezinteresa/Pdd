@@ -466,3 +466,18 @@ body{background:#fbf5ea}
 .toast{font-size:16px;padding:14px 22px;font-weight:600}
 @media(max-width:900px){.toast{font-size:14px}}
 @media(max-height:600px) and (orientation:landscape){.toast{font-size:13px;padding:10px 16px}.scene-tools .violation-chip{height:28px;font-size:12px;padding:0 9px}}
+/* Side panel: readable text sizes (the panel used 8–11px). */
+.lesson-panel .eyebrow{font-size:11px;letter-spacing:1.4px}
+.lesson-panel .lesson-panel-top>p{font-size:14px;line-height:1.55;max-width:none;color:#6f786a}
+.lesson-panel .lesson-tags span{font-size:11.5px;padding:5px 8px;white-space:nowrap}
+.lesson-panel .instructor-note strong{font-size:13px}
+.lesson-panel .instructor-note p{font-size:13px;line-height:1.5;color:#6f7a63}
+.lesson-panel .trip-log-head,.lesson-panel .trip-log-head .eyebrow{font-size:11px}
+.lesson-panel .trip-log li strong{font-size:13px}
+.lesson-panel .trip-log li p,.lesson-panel .trip-log-empty{font-size:12.5px;line-height:1.5}
+.lesson-panel .trip-log li small{font-size:11.5px}
+.lesson-panel .primary-button{font-size:15px}
+.lesson-panel .reset-button{font-size:13.5px}
+.lesson-panel .prototype-note p{font-size:11px;line-height:1.5}
+@media(max-height:600px) and (orientation:landscape){.lesson-panel .eyebrow{font-size:9.5px}.lesson-panel .lesson-panel-top>p,.lesson-panel .instructor-note p,.lesson-panel .instructor-note strong{font-size:12px}.lesson-panel .lesson-tags span{font-size:10.5px}.lesson-panel .primary-button{font-size:13px}.lesson-panel .reset-button{font-size:12px}}
+.lesson-panel .lesson-tags{flex-wrap:wrap;row-gap:5px}
